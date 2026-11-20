@@ -289,6 +289,54 @@ wmctrl -i -r "$NM" -b remove,fullscreen; sec 0.6
 [ "$(stackpos "$NM")" -lt "$(toppos "$DK")" ]; check "panel-like dock is back on top after leaving fullscreen" $?
 stop_clients
 
+echo "== 20. workspaces: 4 desktops, switch/move/sticky/activate, Alt+Tab stays on the desktop, Ctrl+Alt+arrows"
+cur() { xprop -root _NET_CURRENT_DESKTOP | sed 's/.*= //'; }
+deskof() { xprop -id "$1" _NET_WM_DESKTOP | sed 's/.*= //'; }
+noactive() { xprop -root _NET_ACTIVE_WINDOW | grep -q 'not found'; }
+[ "$(wmctrl -d | wc -l)" = "4" ] && [ "$(cur)" = "0" ]; check "4 desktops, starting on desktop 0" $?
+xprop -root _NET_DESKTOP_NAMES | grep -q 'Workspace 1.*Workspace 4'; check "_NET_DESKTOP_NAMES set" $?
+newwin w1 -t "W1" -w 300 -h 200 -c 884400 -s 300 -p 100,100; W1=$LAST_ID
+[ "$(deskof "$W1")" = "0" ]; check "new window lands on the current desktop (0)" $?
+wmctrl -s 1; sec 0.6
+[ "$(cur)" = "1" ] && [ "$(viewable "$W1")" = "0" ]; check "switching to desktop 1 hides W1" $?
+noactive; check "no window is active on the empty desktop" $?
+newwin w2 -t "W2" -w 300 -h 200 -c 008844 -s 300 -p 500,100; W2=$LAST_ID
+[ "$(deskof "$W2")" = "1" ] && [ "$(viewable "$W2")" = "1" ]; check "window created on desktop 1 belongs to desktop 1" $?
+[ "$(hexnorm "$(active)")" = "$(hexnorm "$W2")" ]; check "and gets focus" $?
+wmctrl -s 0; sec 0.6
+[ "$(viewable "$W1")" = "1" ] && [ "$(viewable "$W2")" = "0" ]; check "back on desktop 0: W1 shown, W2 hidden" $?
+[ "$(hexnorm "$(active)")" = "$(hexnorm "$W1")" ]; check "focus returns to W1 (most recent on that desktop)" $?
+wmctrl -i -r "$W1" -t 2; sec 0.6
+[ "$(deskof "$W1")" = "2" ] && [ "$(viewable "$W1")" = "0" ]; check "moving W1 to desktop 2 hides it and updates _NET_WM_DESKTOP" $?
+wmctrl -i -a "$W1"; sec 0.8
+[ "$(cur)" = "2" ] && [ "$(viewable "$W1")" = "1" ] && [ "$(hexnorm "$(active)")" = "$(hexnorm "$W1")" ]; check "activating a window on another desktop switches to it" $?
+wmctrl -i -r "$W2" -b add,sticky; sec 0.6
+[ "$(deskof "$W2")" = "4294967295" ] && xprop -id "$W2" _NET_WM_STATE | grep -q STICKY; check "sticky: desktop becomes 0xFFFFFFFF and STATE_STICKY is set" $?
+wmctrl -s 3; sec 0.6
+[ "$(viewable "$W2")" = "1" ] && [ "$(viewable "$W1")" = "0" ]; check "sticky window follows to desktop 3, W1 stays behind" $?
+newwin dkw -t "Fake panel" -w 400 -h 40 -c 111111 -s 300 -p 0,760 -y dock; DKW=$LAST_ID
+wmctrl -s 0; sec 0.5
+"$XG" | grep -q "win=$(printf '0x%X' "$(printf '%d' "$DKW")") .*viewable=1"; check "dock windows are visible on every desktop" $?
+stop_clients
+wmctrl -s 0; sec 0.4
+newwin x -t "X" -w 200 -h 150 -c 555500 -s 300 -p 100,100; X=$LAST_ID
+newwin y -t "Y" -w 200 -h 150 -c 005555 -s 300 -p 400,100; Y=$LAST_ID
+newwin z -t "Z" -w 200 -h 150 -c 550055 -s 300 -p 700,100; Z=$LAST_ID
+wmctrl -i -r "$Z" -t 1; sec 0.5
+"$XDO" keydown Alt_L key Tab keyup Alt_L; sec 0.5
+[ "$(cur)" = "0" ] && [ "$(hexnorm "$(active)")" = "$(hexnorm "$X")" ]; check "Alt+Tab cycles only this desktop's windows (Z on desktop 1 is skipped)" $?
+"$XDO" keydown Control_L keydown Alt_L key Right keyup Alt_L keyup Control_L; sec 0.6
+[ "$(cur)" = "1" ] && [ "$(viewable "$Z")" = "1" ]; check "Ctrl+Alt+Right goes to desktop 1" $?
+"$XDO" keydown Control_L keydown Alt_L key Left keyup Alt_L keyup Control_L; sec 0.6
+[ "$(cur)" = "0" ]; check "Ctrl+Alt+Left goes back to desktop 0" $?
+"$XDO" keydown Control_L keydown Alt_L key Left keyup Alt_L keyup Control_L; sec 0.6
+[ "$(cur)" = "0" ]; check "no wrap-around past desktop 0" $?
+FOC=$(hexnorm "$(active)")
+"$XDO" keydown Control_L keydown Alt_L keydown Shift_L key Right keyup Shift_L keyup Alt_L keyup Control_L; sec 0.8
+[ "$(cur)" = "1" ] && [ "$(deskof "$FOC")" = "1" ] && [ "$(viewable "$FOC")" = "1" ] && [ "$(hexnorm "$(active)")" = "$FOC" ]; check "Ctrl+Alt+Shift+Right moves the focused window to desktop 1 and follows it" $?
+wmctrl -s 0; sec 0.4
+stop_clients
+
 stop_wm
 
 echo

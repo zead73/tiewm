@@ -24,6 +24,7 @@ type
     InputHint, HasDelete, HasTakeFocus: Boolean;
     MinW, MinH, MaxW, MaxH, IncW, IncH, BaseW, BaseH: Integer;   { client sizes }
     Maximized, Fullscreen, Iconic: Boolean;
+    Desktop: Integer;             { 0..N-1, or -1 = sticky (all desktops) }
     Transient: TWindow;           { WM_TRANSIENT_FOR, 0 if none }
     SaveX, SaveY, SaveW, SaveH: Integer;   { geometry to return to from maximize/fullscreen }
     PaintedActive: Boolean;
@@ -59,6 +60,7 @@ type
     FClients: TList;       { creation order }
     FMru: TList;           { most recently focused last }
     FDocks: array of TDock;
+    FNumDesk, FCurDesk: Integer;
     FDesktops: array of TWindow;   { _NET_WM_WINDOW_TYPE_DESKTOP windows: always at the bottom }
     FFocused: TClient;
     FCheckWin: TWindow;
@@ -69,14 +71,14 @@ type
     aSupported, aNetWmName, aActive, aClientList, aClientListStk, aFrameExtents: TAtom;
     aNetWmState, aMaxVert, aMaxHorz, aCloseWindow, aWindowType: TAtom;
     aTypeDock, aTypeDesktop, aTypeMenu, aTypeDropdown, aTypePopup, aTypeTooltip, aTypeNotification, aTypeCombo, aTypeDnd: TAtom;
-    aHidden, aFullscreen, aWmDesktop, aBelow: TAtom;
+    aHidden, aFullscreen, aWmDesktop, aBelow, aSticky, aDeskNames: TAtom;
     aStrut, aStrutPartial, aNumDesktops, aCurDesktop, aWorkarea, aDeskGeom, aDeskViewport, aSupportingCheck: TAtom;
     { drag state }
     FDrag: TDragKind;
     FDragClient: TClient;
     FDragHit: THitKind;
     FDragPX, FDragPY, FDragX, FDragY, FDragW, FDragH: Integer;
-    FKcF4, FKcTab, FKcReturn, FKcF9, FKcF11, FKcAltL, FKcAltR: cuint;
+    FKcLeft, FKcRight, FKcF4, FKcTab, FKcReturn, FKcF9, FKcF11, FKcAltL, FKcAltR: cuint;
     FCycling: Boolean;
     FCycleList: TList;
     FCycleIdx: Integer;
@@ -99,6 +101,13 @@ type
     function IsUnframed(Win: TWindow): Boolean;
     function HasState(Win: TWindow; St: TAtom): Boolean;
     procedure Restack;
+    function OnDesk(C: TClient): Boolean;
+    function VisibleNow(C: TClient): Boolean;
+    procedure ApplyVisibility(C: TClient);
+    procedure SwitchDesktop(N: Integer; ATime: culong);
+    procedure MoveToDesktop(C: TClient; D: Integer);
+    procedure SetDesktopProp(C: TClient);
+    function ReadDesktopProp(Win: TWindow): Integer;
     procedure ReadStruts(var D: TDock);
     procedure UpdateWorkarea;
     procedure WorkArea(out AX, AY, AW, AH: Integer);
@@ -196,6 +205,10 @@ begin
   FScrW := DisplayWidth(FDpy, FScr);
   FScrH := DisplayHeight(FDpy, FScr);
   FDebug := GetEnvironmentVariable('TIEWM_DEBUG') <> '';
+  FNumDesk := StrToIntDef(GetEnvironmentVariable('TIEWM_DESKTOPS'), 4);
+  if FNumDesk < 1 then FNumDesk := 1;
+  if FNumDesk > 20 then FNumDesk := 20;
+  FCurDesk := 0;
   FClients := TList.Create;
   FMru := TList.Create;
   FCycleList := TList.Create;
@@ -244,6 +257,8 @@ begin
   aHidden := A('_NET_WM_STATE_HIDDEN'); aFullscreen := A('_NET_WM_STATE_FULLSCREEN');
   aWmDesktop := A('_NET_WM_DESKTOP');
   aBelow := A('_NET_WM_STATE_BELOW');
+  aSticky := A('_NET_WM_STATE_STICKY');
+  aDeskNames := A('_NET_DESKTOP_NAMES');
   aStrut := A('_NET_WM_STRUT'); aStrutPartial := A('_NET_WM_STRUT_PARTIAL');
   aNumDesktops := A('_NET_NUMBER_OF_DESKTOPS'); aCurDesktop := A('_NET_CURRENT_DESKTOP');
   aWorkarea := A('_NET_WORKAREA'); aDeskGeom := A('_NET_DESKTOP_GEOMETRY');
@@ -387,6 +402,94 @@ begin
   end;
 end;
 
+{ ---- workspaces ---- }
+
+function TWM.OnDesk(C: TClient): Boolean;
+begin
+  Result := (C.Desktop < 0) or (C.Desktop = FCurDesk);
+end;
+
+function TWM.VisibleNow(C: TClient): Boolean;
+begin
+  Result := (not C.Iconic) and OnDesk(C);
+end;
+
+procedure TWM.ApplyVisibility(C: TClient);
+begin
+  if C.Iconic then Exit;
+  if OnDesk(C) then XMapWindow(FDpy, C.Frame) else XUnmapWindow(FDpy, C.Frame);
+end;
+
+procedure TWM.SetDesktopProp(C: TClient);
+var
+  V: culong;
+begin
+  if C.Desktop < 0 then V := $FFFFFFFF else V := C.Desktop;
+  SetCards(C.Win, aWmDesktop, [V]);
+end;
+
+function TWM.ReadDesktopProp(Win: TWindow): Integer;
+var
+  D: PByte;
+  N: culong;
+  V: culong;
+begin
+  Result := -2;     { no usable property }
+  D := GetProp(Win, aWmDesktop, XA_CARDINAL, N);
+  if D = nil then Exit;
+  if N >= 1 then
+  begin
+    V := PCULong(D)[0];
+    if V = $FFFFFFFF then Result := -1
+    else if V < culong(FNumDesk) then Result := Integer(V);
+  end;
+  XFree(D);
+end;
+
+procedure TWM.SwitchDesktop(N: Integer; ATime: culong);
+var
+  I: Integer;
+  T: TClient;
+begin
+  if (N < 0) or (N >= FNumDesk) or (N = FCurDesk) then Exit;
+  if FDrag <> dgNone then EndDrag;
+  if FCycling then EndCycle;
+  FCurDesk := N;
+  SetCards(FRoot, aCurDesktop, [culong(N)]);
+  for I := 0 to FClients.Count - 1 do ApplyVisibility(TClient(FClients[I]));
+  if (FFocused <> nil) and VisibleNow(FFocused) then Exit;
+  FFocused := nil;
+  for I := FMru.Count - 1 downto 0 do
+  begin
+    T := TClient(FMru[I]);
+    if VisibleNow(T) then
+    begin
+      FocusClient(T, ATime);
+      Exit;
+    end;
+  end;
+  XSetInputFocus(FDpy, FRoot, RevertToPointerRoot, ATime);
+  XDeleteProperty(FDpy, FRoot, aActive);
+end;
+
+procedure TWM.MoveToDesktop(C: TClient; D: Integer);
+var
+  I: Integer;
+  T: TClient;
+begin
+  if (D >= FNumDesk) or (D < -1) or (C.Desktop = D) then Exit;
+  C.Desktop := D;
+  SetDesktopProp(C);
+  UpdateNetState(C);
+  ApplyVisibility(C);
+  for I := 0 to FClients.Count - 1 do
+  begin
+    T := TClient(FClients[I]);
+    if (T <> C) and (T.Transient = C.Win) then MoveToDesktop(T, D);
+  end;
+  if (C = FFocused) and (not OnDesk(C)) then FocusNext(C);
+end;
+
 function TWM.HasState(Win: TWindow; St: TAtom): Boolean;
 var
   L: TList;
@@ -463,17 +566,25 @@ end;
 
 procedure TWM.UpdateWorkarea;
 var
-  AX, AY, AW, AH: Integer;
+  AX, AY, AW, AH, I: Integer;
+  V: array of culong;
 begin
   WorkArea(AX, AY, AW, AH);
-  SetCards(FRoot, aWorkarea, [culong(AX), culong(AY), culong(AW), culong(AH)]);
+  SetLength(V, 4 * FNumDesk);
+  for I := 0 to FNumDesk - 1 do
+  begin
+    V[4 * I] := culong(AX); V[4 * I + 1] := culong(AY); V[4 * I + 2] := culong(AW); V[4 * I + 3] := culong(AH);
+  end;
+  SetCards(FRoot, aWorkarea, V);
 end;
 
 procedure TWM.SetupEwmh;
 var
   Sup: array of culong;
   Name: string;
-  Atoms: array[0..16] of TAtom;
+  Atoms: array[0..18] of TAtom;
+  Names: string;
+  Zero: array of culong;
   I: Integer;
 begin
   FCheckWin := XCreateSimpleWindow(FDpy, FRoot, -100, -100, 1, 1, 0, 0, 0);
@@ -486,15 +597,21 @@ begin
   Atoms[8] := aCloseWindow; Atoms[9] := aWindowType; Atoms[10] := aSupportingCheck;
   Atoms[11] := aNumDesktops; Atoms[12] := aCurDesktop; Atoms[13] := aWorkarea;
   Atoms[14] := aHidden; Atoms[15] := aFullscreen; Atoms[16] := aWmDesktop;
+  Atoms[17] := aSticky; Atoms[18] := aDeskNames;
   SetLength(Sup, Length(Atoms));
   for I := 0 to High(Atoms) do Sup[I] := Atoms[I];
   SetCards(FRoot, aSupported, Sup);
   { atoms are of type ATOM, not CARDINAL }
   XChangeProperty(FDpy, FRoot, aSupported, XA_ATOM, 32, PropModeReplace, PByte(@Atoms[0]), Length(Atoms));
-  SetCards(FRoot, aNumDesktops, [1]);
-  SetCards(FRoot, aCurDesktop, [0]);
+  SetCards(FRoot, aNumDesktops, [culong(FNumDesk)]);
+  SetCards(FRoot, aCurDesktop, [culong(FCurDesk)]);
   SetCards(FRoot, aDeskGeom, [culong(FScrW), culong(FScrH)]);
-  SetCards(FRoot, aDeskViewport, [0, 0]);
+  SetLength(Zero, 2 * FNumDesk);
+  for I := 0 to High(Zero) do Zero[I] := 0;
+  SetCards(FRoot, aDeskViewport, Zero);
+  Names := '';
+  for I := 1 to FNumDesk do Names := Names + 'Workspace ' + IntToStr(I) + #0;
+  XChangeProperty(FDpy, FRoot, aDeskNames, aUtf8, 8, PropModeReplace, PByte(PChar(Names)), Length(Names));
   UpdateWorkarea;
 end;
 
@@ -540,10 +657,11 @@ end;
 
 procedure TWM.UpdateNetState(C: TClient);
 var
-  V: array[0..3] of TAtom;
+  V: array[0..4] of TAtom;
   N: Integer;
 begin
   N := 0;
+  if C.Desktop < 0 then begin V[N] := aSticky; Inc(N); end;
   if C.Maximized then begin V[N] := aMaxVert; Inc(N); V[N] := aMaxHorz; Inc(N); end;
   if C.Fullscreen then begin V[N] := aFullscreen; Inc(N); end;
   if C.Iconic then begin V[N] := aHidden; Inc(N); end;
@@ -797,6 +915,12 @@ begin
   C.Win := Win;
   C.Name := ReadName(Win);
   ReadHints(C);
+  C.Desktop := ReadDesktopProp(Win);
+  if C.Desktop = -2 then
+  begin
+    if FindClient(C.Transient) <> nil then C.Desktop := FindClient(C.Transient).Desktop
+    else C.Desktop := FCurDesk;
+  end;
   CW := Atr.width; CH := Atr.height;
   ConstrainClient(C, CW, CH);
   C.W := CW + M.LeftW + M.RightW;
@@ -830,14 +954,15 @@ begin
   FMru.Add(C);
   Repaint(C, True);
   XMapWindow(FDpy, Win);
-  XMapWindow(FDpy, C.Frame);
+  if OnDesk(C) then XMapWindow(FDpy, C.Frame);
   SetWmState(C, NormalState);
-  SetCards(Win, aWmDesktop, [0]);   { single desktop for now }
+  SetDesktopProp(C);
+  UpdateNetState(C);
   SetCards(Win, aFrameExtents, [culong(M.LeftW), culong(M.RightW), culong(M.TitleH), culong(M.BottomH)]);
   SendConfigure(C);
   UpdateClientList;
   Log(Format('managed 0x%x "%s" frame 0x%x at %d,%d %dx%d', [Win, C.Name, C.Frame, C.X, C.Y, C.W, C.H]));
-  if not Startup then FocusClient(C, CurrentTime);
+  if (not Startup) and OnDesk(C) then FocusClient(C, CurrentTime);
 end;
 
 procedure TWM.Unmanage(C: TClient; Destroyed: Boolean);
@@ -870,7 +995,7 @@ begin
   if FFocused = C then
   begin
     FFocused := nil;
-    if (Par <> nil) and (Par <> C) and (not Par.Iconic) then FocusClient(Par, CurrentTime)
+    if (Par <> nil) and (Par <> C) and VisibleNow(Par) then FocusClient(Par, CurrentTime)
     else FocusNext(nil);
   end;
   C.Free;
@@ -998,6 +1123,7 @@ end;
 
 procedure TWM.Activate(C: TClient; ATime: culong);
 begin
+  if not OnDesk(C) then SwitchDesktop(C.Desktop, ATime);
   if C.Iconic then Deiconify(C);
   FocusClient(C, ATime);
   RaiseClient(C);
@@ -1011,7 +1137,7 @@ begin
   for I := FMru.Count - 1 downto 0 do
   begin
     T := TClient(FMru[I]);
-    if (T <> Exclude) and (not T.Iconic) then
+    if (T <> Exclude) and VisibleNow(T) then
     begin
       FocusClient(T, CurrentTime);
       Exit;
@@ -1058,7 +1184,7 @@ begin
   if not C.Iconic then Exit;
   C.Iconic := False;
   XMapWindow(FDpy, C.Win);
-  XMapWindow(FDpy, C.Frame);
+  if OnDesk(C) then XMapWindow(FDpy, C.Frame);
   SetWmState(C, NormalState);
   UpdateNetState(C);
   for I := 0 to FClients.Count - 1 do
@@ -1132,6 +1258,8 @@ const
   end;
 
 begin
+  FKcLeft := XKeysymToKeycode(FDpy, TKeySym(XK_Left));
+  FKcRight := XKeysymToKeycode(FDpy, TKeySym(XK_Right));
   FKcF4 := XKeysymToKeycode(FDpy, TKeySym(XK_F4));
   FKcTab := XKeysymToKeycode(FDpy, TKeySym(XK_Tab));
   FKcReturn := XKeysymToKeycode(FDpy, TKeySym(XK_Return));
@@ -1145,6 +1273,10 @@ begin
   G(XK_F9, Mod1Mask);
   G(XK_F11, Mod1Mask);
   G(XK_Return, Mod4Mask);
+  G(XK_Left, ControlMask or Mod1Mask);
+  G(XK_Right, ControlMask or Mod1Mask);
+  G(XK_Left, ControlMask or Mod1Mask or ShiftMask);
+  G(XK_Right, ControlMask or Mod1Mask or ShiftMask);
 end;
 
 procedure TWM.StartCycle(Dir: Integer; ATime: culong);
@@ -1155,7 +1287,8 @@ var
   Mask: cuint;
 begin
   FCycleList.Clear;
-  for I := FMru.Count - 1 downto 0 do FCycleList.Add(FMru[I]);
+  for I := FMru.Count - 1 downto 0 do
+    if OnDesk(TClient(FMru[I])) then FCycleList.Add(FMru[I]);
   if FCycleList.Count < 2 then begin FCycleList.Clear; Exit; end;
   FCycleIdx := 0;
   { while Alt stays down we own the keyboard, so Tab repeats and the Alt release reach us }
@@ -1192,6 +1325,8 @@ end;
 procedure TWM.OnKeyPress(var Ev: TXKeyEvent);
 var
   St: cuint;
+  K: Integer;
+  C: TClient;
 begin
   St := Ev.state and not CleanLocks;
   if FCycling then
@@ -1217,6 +1352,25 @@ begin
   else if (St = Mod4Mask) and (Ev.keycode = FKcReturn) then
   begin
     if FFocused <> nil then ToggleMaximize(FFocused);
+  end
+  else if (St = (ControlMask or Mod1Mask)) and (Ev.keycode = FKcLeft) then SwitchDesktop(FCurDesk - 1, Ev.time)
+  else if (St = (ControlMask or Mod1Mask)) and (Ev.keycode = FKcRight) then SwitchDesktop(FCurDesk + 1, Ev.time)
+  else if (St = (ControlMask or Mod1Mask or ShiftMask)) and ((Ev.keycode = FKcLeft) or (Ev.keycode = FKcRight)) then
+  begin
+    { move the focused window one desktop over and go with it }
+    if (FFocused <> nil) and (FFocused.Desktop >= 0) then
+    begin
+      if Ev.keycode = FKcLeft then K := FFocused.Desktop - 1 else K := FFocused.Desktop + 1;
+      if (K >= 0) and (K < FNumDesk) then
+      begin
+        C := FFocused;
+        C.Desktop := K;
+        SetDesktopProp(C);
+        UpdateNetState(C);
+        SwitchDesktop(K, Ev.time);
+        FocusClient(C, Ev.time);
+      end;
+    end;
   end;
 end;
 
@@ -1314,7 +1468,7 @@ begin
     else
     begin
       XMapWindow(FDpy, C.Win);
-      XMapWindow(FDpy, C.Frame);
+      if OnDesk(C) then XMapWindow(FDpy, C.Frame);
     end;
     Exit;
   end;
@@ -1503,6 +1657,11 @@ var
   K: Integer;
   A: TAtom;
 begin
+  if (Ev.message_type = aCurDesktop) and (Ev.window = FRoot) then
+  begin
+    SwitchDesktop(Integer(Ev.data.l[0]), CurrentTime);
+    Exit;
+  end;
   C := FindClient(Ev.window);
   if C = nil then
   begin
@@ -1525,6 +1684,11 @@ begin
   end;
   if Ev.message_type = aActive then
     Activate(C, CurrentTime)
+  else if Ev.message_type = aWmDesktop then
+  begin
+    if culong(Ev.data.l[0]) = $FFFFFFFF then MoveToDesktop(C, -1)
+    else MoveToDesktop(C, Integer(Ev.data.l[0]));
+  end
   else if Ev.message_type = aCloseWindow then
     CloseClient(C)
   else if Ev.message_type = aChangeState then
@@ -1547,6 +1711,16 @@ begin
           Want := not C.Maximized;
         end;
         if Want <> C.Maximized then ToggleMaximize(C);
+      end
+      else if A = aSticky then
+      begin
+        case Act of
+          0: Want := False;
+          1: Want := True;
+        else
+          Want := C.Desktop >= 0;
+        end;
+        if Want then MoveToDesktop(C, -1) else MoveToDesktop(C, FCurDesk);
       end
       else if A = aFullscreen then
       begin

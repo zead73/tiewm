@@ -33,7 +33,7 @@ Run it ONLY on a display you mean to manage: `DISPLAY=:99 ./tiewm` (it refuses t
 the root; `TIEWM_THEME`, `TIEWM_FONT`, `TIEWM_DEBUG=1` are the only settings so far). SIGTERM/SIGINT hand all
 windows back to the root cleanly.
 
-Works (69 scenario checks, `tools/wmtest.sh`, scratch Xvfb on :99 only): manage/adopt/unmanage, centred
+Works (88 scenario checks, `tools/wmtest.sh`, scratch Xvfb on :99 only): manage/adopt/unmanage, centred
 placement (honours USPosition), themed frames with shape, click-to-focus with click replay to the app,
 raise on click, active/inactive repaint, title updates, titlebar drag and Alt+drag (also with Num/Caps Lock),
 Alt+right-drag resize, edge/corner resize with min-size and size-increment hints, close button
@@ -48,6 +48,15 @@ all with Caps/Num Lock; fullscreen (`_NET_WM_STATE_FULLSCREEN`, no decorations, 
 iconify (H button, Alt+F9, `WM_CHANGE_STATE`, `_NET_WM_STATE_HIDDEN`, WM_STATE Iconic, restored by
 `_NET_ACTIVE_WINDOW` / Alt+Tab / the client mapping itself again); `WM_TRANSIENT_FOR` dialogs (centred over the
 parent, kept above it when it is raised, iconified with it, focus returns to the parent when the dialog closes).
+
+Workspaces: 4 desktops (`TIEWM_DESKTOPS=N`, 1..20), `_NET_NUMBER_OF_DESKTOPS` / `_CURRENT_DESKTOP` / `_DESKTOP_NAMES`
+("Workspace N") / per-desktop `_NET_WORKAREA`, `_NET_WM_DESKTOP` on every client (and its client message to move a window),
+`_NET_CURRENT_DESKTOP` client message (lxqt-panel switcher, wmctrl -s), sticky windows (`_NET_WM_STATE_STICKY` = desktop
+0xFFFFFFFF), new windows and transients open on the current desktop (transients on their parent's), activating a window on
+another desktop switches to it (xfwm4's activate_action=switch), Alt+Tab only cycles the current desktop's windows,
+Ctrl+Alt+Left/Right switch (no wrap), Ctrl+Alt+Shift+Left/Right move the focused window and follow it. Hidden = frame
+unmapped (client stays mapped, WM_STATE stays Normal); docks and the desktop window show on every desktop. Verified with
+the real lxqt-panel switcher in the nested session.
 
 Stacking layers (found on the first real session, 2026-11-20: the full-screen pcmanfm-desktop window covered the
 panel and conky): desktop-type windows are kept at the very bottom, docks with `_NET_WM_STATE_BELOW` (conky) just
@@ -64,7 +73,7 @@ click-to-activate / click-again-to-minimize / restore work, Alt+Tab, fullscreen,
 transient/centred/focused, Vivaldi F11 fullscreen on and off. Found and fixed: lxqt-panel's taskbar shows nothing
 unless every window has `_NET_WM_DESKTOP`.
 
-Deliberately not done: workspaces, shade/stick, other key bindings (no config file for keys yet), `--replace`,
+Deliberately not done: shade, other key bindings (no config file for keys yet), `--replace`,
 multi-monitor, window menu, `_NET_WM_STATE_ABOVE/BELOW/STICKY`, modal dialogs, adopting windows that are
 iconic when the WM starts, button prelight/pressed images, app icon in the menu button, config file, session
 management, gravity/transient-for handling, `_NET_WM_MOVERESIZE`. Not yet run against the real LXQt
