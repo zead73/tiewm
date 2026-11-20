@@ -23,7 +23,8 @@ type
     IgnoreUnmap: Integer;         { unmaps we caused ourselves }
     InputHint, HasDelete, HasTakeFocus: Boolean;
     MinW, MinH, MaxW, MaxH, IncW, IncH, BaseW, BaseH: Integer;   { client sizes }
-    Maximized, Fullscreen, Iconic, Above: Boolean;
+    Maximized, Fullscreen, Iconic, Above, Shaded: Boolean;
+    UnshadeH: Integer;            { frame height to return to when unshaded }
     Desktop: Integer;             { 0..N-1, or -1 = sticky (all desktops) }
     Transient: TWindow;           { WM_TRANSIENT_FOR, 0 if none }
     SaveX, SaveY, SaveW, SaveH: Integer;   { geometry to return to from maximize/fullscreen }
@@ -45,6 +46,7 @@ type
   end;
 
   TDragKind = (dgNone, dgMove, dgResize);
+  TKbMode = (kmNone, kmMove, kmResize);
 
   { TWM }
 
@@ -71,7 +73,7 @@ type
     aSupported, aNetWmName, aActive, aClientList, aClientListStk, aFrameExtents: TAtom;
     aNetWmState, aMaxVert, aMaxHorz, aCloseWindow, aWindowType: TAtom;
     aTypeDock, aTypeDesktop, aTypeMenu, aTypeDropdown, aTypePopup, aTypeTooltip, aTypeNotification, aTypeCombo, aTypeDnd: TAtom;
-    aHidden, aFullscreen, aWmDesktop, aBelow, aAbove, aSticky, aDeskNames: TAtom;
+    aHidden, aFullscreen, aWmDesktop, aBelow, aAbove, aShaded, aSticky, aDeskNames: TAtom;
     aStrut, aStrutPartial, aNumDesktops, aCurDesktop, aWorkarea, aDeskGeom, aDeskViewport, aSupportingCheck: TAtom;
     { drag state }
     FDrag: TDragKind;
@@ -79,6 +81,9 @@ type
     FDragHit: THitKind;
     FDragPX, FDragPY, FDragX, FDragY, FDragW, FDragH: Integer;
     FCfg: TConfig;
+    FKbMode: TKbMode;
+    FKbClient: TClient;
+    FKbX, FKbY, FKbW, FKbH: Integer;
     FMenu: TPopupMenu;
     FMenuFont: TTitleFont;
     FMenuClient: TClient;
@@ -133,6 +138,11 @@ type
     procedure ToggleMaximize(C: TClient);
     procedure SetFullscreen(C: TClient; On: Boolean);
     procedure SetAbove(C: TClient; On: Boolean);
+    procedure SetShaded(C: TClient; On: Boolean);
+    function OptsFor(C: TClient): TFrameOpts;
+    procedure StartKb(Mode: TKbMode; ATime: culong);
+    procedure EndKb(Commit: Boolean);
+    procedure KbKey(var Ev: TXKeyEvent);
     procedure Iconify(C: TClient);
     procedure Deiconify(C: TClient);
     procedure FocusNext(Exclude: TClient);
@@ -305,6 +315,7 @@ begin
   aWmDesktop := A('_NET_WM_DESKTOP');
   aBelow := A('_NET_WM_STATE_BELOW');
   aAbove := A('_NET_WM_STATE_ABOVE');
+  aShaded := A('_NET_WM_STATE_SHADED');
   aSticky := A('_NET_WM_STATE_STICKY');
   aDeskNames := A('_NET_DESKTOP_NAMES');
   aStrut := A('_NET_WM_STRUT'); aStrutPartial := A('_NET_WM_STRUT_PARTIAL');
@@ -502,6 +513,7 @@ begin
   if (N < 0) or (N >= FNumDesk) or (N = FCurDesk) then Exit;
   if FDrag <> dgNone then EndDrag;
   if FCycling then EndCycle;
+  if FKbMode <> kmNone then EndKb(True);
   FMenu.Close;
   FCurDesk := N;
   SetCards(FRoot, aCurDesktop, [culong(N)]);
@@ -636,7 +648,7 @@ procedure TWM.SetupEwmh;
 var
   Sup: array of culong;
   Name: string;
-  Atoms: array[0..19] of TAtom;
+  Atoms: array[0..20] of TAtom;
   Names: string;
   Zero: array of culong;
   I: Integer;
@@ -651,7 +663,7 @@ begin
   Atoms[8] := aCloseWindow; Atoms[9] := aWindowType; Atoms[10] := aSupportingCheck;
   Atoms[11] := aNumDesktops; Atoms[12] := aCurDesktop; Atoms[13] := aWorkarea;
   Atoms[14] := aHidden; Atoms[15] := aFullscreen; Atoms[16] := aWmDesktop;
-  Atoms[17] := aSticky; Atoms[18] := aDeskNames; Atoms[19] := aAbove;
+  Atoms[17] := aSticky; Atoms[18] := aDeskNames; Atoms[19] := aAbove; Atoms[20] := aShaded;
   SetLength(Sup, Length(Atoms));
   for I := 0 to High(Atoms) do Sup[I] := Atoms[I];
   SetCards(FRoot, aSupported, Sup);
@@ -711,10 +723,11 @@ end;
 
 procedure TWM.UpdateNetState(C: TClient);
 var
-  V: array[0..5] of TAtom;
+  V: array[0..6] of TAtom;
   N: Integer;
 begin
   N := 0;
+  if C.Shaded then begin V[N] := aShaded; Inc(N); end;
   if C.Above then begin V[N] := aAbove; Inc(N); end;
   if C.Desktop < 0 then begin V[N] := aSticky; Inc(N); end;
   if C.Maximized then begin V[N] := aMaxVert; Inc(N); V[N] := aMaxHorz; Inc(N); end;
@@ -807,7 +820,7 @@ var
 begin
   E := Ext(C);
   CW := C.W - E.L - E.R;
-  CH := C.H - E.T - E.B;
+  if C.Shaded then CH := C.UnshadeH - E.T - E.B else CH := C.H - E.T - E.B;
   if CW < 1 then CW := 1;
   if CH < 1 then CH := 1;
 end;
@@ -857,9 +870,9 @@ begin
   if (not Force) and C.Painted and (C.PaintedActive = Act) and (C.PaintedW = C.W) and
      (C.PaintedH = C.H) and (C.PaintedName = C.Name) then Exit;
   if Act then
-    Pm := PaintFrame(FDpy, FScr, FTheme, FFont, wsActive, C.W, C.H, C.Name, TitleAlign, Mask, TX, BY)
+    Pm := PaintFrameEx(FDpy, FScr, FTheme, FFont, wsActive, C.W, C.H, C.Name, TitleAlign, C.Shaded, Mask, TX, BY)
   else
-    Pm := PaintFrame(FDpy, FScr, FTheme, FFont, wsInactive, C.W, C.H, C.Name, TitleAlign, Mask, TX, BY);
+    Pm := PaintFrameEx(FDpy, FScr, FTheme, FFont, wsInactive, C.W, C.H, C.Name, TitleAlign, C.Shaded, Mask, TX, BY);
   XSetWindowBackgroundPixmap(FDpy, C.Frame, Pm);
   XShapeCombineMask(FDpy, C.Frame, ShapeBounding, 0, 0, Mask, ShapeSet);
   XClearWindow(FDpy, C.Frame);
@@ -1032,6 +1045,7 @@ begin
     FMenu.Close;
     FMenuClient := nil;
   end;
+  if FKbClient = C then EndKb(True);
   if FCycleList.IndexOf(C) >= 0 then
   begin
     FCycleList.Remove(C);
@@ -1164,6 +1178,7 @@ var
   AX, AY, AW, AH: Integer;
 begin
   if C.Fullscreen or C.Iconic then Exit;
+  if C.Shaded then SetShaded(C, False);
   if C.Maximized then
   begin
     C.Maximized := False;
@@ -1208,6 +1223,35 @@ begin
   if (Old <> nil) and (FClients.IndexOf(Old) >= 0) and (not Old.Iconic) then Repaint(Old, False);
   XSetInputFocus(FDpy, FRoot, RevertToPointerRoot, CurrentTime);
   XDeleteProperty(FDpy, FRoot, aActive);
+end;
+
+function TWM.OptsFor(C: TClient): TFrameOpts;
+begin
+  Result := FOpts;
+  Result.Shaded := C.Shaded;
+end;
+
+{ Rolls the window up to its titlebar. The client stays mapped, only clipped by the
+  smaller frame, so it keeps running and keeps its real size. }
+procedure TWM.SetShaded(C: TClient; On: Boolean);
+begin
+  if C.Shaded = On then Exit;
+  if On then
+  begin
+    if C.Maximized or C.Fullscreen or C.Iconic then Exit;
+    C.UnshadeH := C.H;
+    C.Shaded := True;
+    C.H := FTheme.Metrics.TitleH;
+  end
+  else
+  begin
+    C.Shaded := False;
+    C.H := C.UnshadeH;
+  end;
+  XResizeWindow(FDpy, C.Frame, C.W, C.H);
+  Repaint(C, True);
+  SendConfigure(C);
+  UpdateNetState(C);
 end;
 
 procedure TWM.SetAbove(C: TClient; On: Boolean);
@@ -1269,6 +1313,7 @@ var
 begin
   if C.Fullscreen = On then Exit;
   M := FTheme.Metrics;
+  if C.Shaded then SetShaded(C, False);
   if On then
   begin
     if C.Iconic then Deiconify(C);
@@ -1311,6 +1356,7 @@ end;
 { ---- window menu ---- }
 
 const
+  mnShade = 7;
   mnMinimize = 1;
   mnMaximize = 2;
   mnFullscreen = 3;
@@ -1332,6 +1378,7 @@ begin
   FMenu.Add(mnFullscreen, 'Fullscreen', C.Fullscreen, True);
   FMenu.Add(mnAbove, 'Always on top', C.Above, True);
   FMenu.Add(mnSticky, 'On all workspaces', C.Desktop < 0, True);
+  FMenu.Add(mnShade, 'Shade', C.Shaded, not (C.Maximized or C.Fullscreen));
   FMenu.AddSeparator;
   for K := 0 to FNumDesk - 1 do
     FMenu.Add(mnDesktop + K, 'Move to Workspace ' + IntToStr(K + 1), C.Desktop = K, C.Desktop <> K);
@@ -1356,6 +1403,7 @@ begin
   else if Id = mnMaximize then ToggleMaximize(C)
   else if Id = mnFullscreen then SetFullscreen(C, not C.Fullscreen)
   else if Id = mnAbove then SetAbove(C, not C.Above)
+  else if Id = mnShade then SetShaded(C, not C.Shaded)
   else if Id = mnSticky then
   begin
     if C.Desktop < 0 then MoveToDesktop(C, FCurDesk) else MoveToDesktop(C, -1);
@@ -1426,6 +1474,9 @@ begin
     kaWindowMenu:
       if FFocused <> nil then
         OpenWindowMenu(FFocused, FFocused.X + 24, FFocused.Y + FTheme.Metrics.TitleH, ATime);
+    kaShade: if FFocused <> nil then SetShaded(FFocused, not FFocused.Shaded);
+    kaMoveWindow: StartKb(kmMove, ATime);
+    kaResizeWindow: StartKb(kmResize, ATime);
     kaGotoDesk: SwitchDesktop(B.Arg - 1, ATime);
     kaMoveToDesk: MoveFocusedTo(B.Arg - 1, ATime);
   end;
@@ -1477,11 +1528,94 @@ begin
   FCycleList.Clear;
 end;
 
+{ ---- Alt+F7 / Alt+F8: move / resize the focused window with the arrow keys ---- }
+
+procedure TWM.StartKb(Mode: TKbMode; ATime: culong);
+var
+  C: TClient;
+begin
+  C := FFocused;
+  if (C = nil) or C.Maximized or C.Fullscreen or C.Iconic then Exit;
+  if (Mode = kmResize) and C.Shaded then Exit;
+  if FKbMode <> kmNone then Exit;
+  if FCycling then EndCycle;
+  if FMenu.IsOpen then FMenu.Close;
+  if FDrag <> dgNone then EndDrag;
+  if XGrabKeyboard(FDpy, FRoot, 0, GrabModeAsync, GrabModeAsync, ATime) <> GrabSuccess then Exit;
+  FKbMode := Mode;
+  FKbClient := C;
+  FKbX := C.X; FKbY := C.Y; FKbW := C.W; FKbH := C.H;
+  RaiseClient(C);
+end;
+
+procedure TWM.EndKb(Commit: Boolean);
+var
+  C: TClient;
+begin
+  if FKbMode = kmNone then Exit;
+  C := FKbClient;
+  XUngrabKeyboard(FDpy, CurrentTime);
+  FKbMode := kmNone;
+  FKbClient := nil;
+  if (C = nil) or (FClients.IndexOf(C) < 0) then Exit;
+  if not Commit then SetFrameGeometry(C, FKbX, FKbY, FKbW, FKbH);   { Escape: back to where it was }
+  SendConfigure(C);
+end;
+
+procedure TWM.KbKey(var Ev: TXKeyEvent);
+var
+  Ks: TKeySym;
+  C: TClient;
+  Step, DX, DY, CW, CH: Integer;
+  E: TExt;
+begin
+  C := FKbClient;
+  if (C = nil) or (FClients.IndexOf(C) < 0) then
+  begin
+    EndKb(True);
+    Exit;
+  end;
+  Ks := XLookupKeysym(@Ev, 0);
+  if Ks = XK_Escape then begin EndKb(False); Exit; end;
+  if (Ks = XK_Return) or (Ks = XK_KP_Enter) then begin EndKb(True); Exit; end;
+  if (Ev.state and ShiftMask) <> 0 then Step := 1 else Step := 10;
+  DX := 0; DY := 0;
+  if Ks = XK_Left then DX := -Step
+  else if Ks = XK_Right then DX := Step
+  else if Ks = XK_Up then DY := -Step
+  else if Ks = XK_Down then DY := Step
+  else Exit;
+  if FKbMode = kmMove then
+  begin
+    C.X := C.X + DX;
+    C.Y := C.Y + DY;
+    XMoveWindow(FDpy, C.Frame, C.X, C.Y);
+    SendConfigure(C);
+  end
+  else
+  begin
+    E := Ext(C);
+    ClientSizeOf(C, CW, CH);
+    { windows that resize in steps (terminals) move one step at a time }
+    if (DX <> 0) and (C.IncW > 1) and (Abs(DX) < C.IncW) then DX := DX div Abs(DX) * C.IncW;
+    if (DY <> 0) and (C.IncH > 1) and (Abs(DY) < C.IncH) then DY := DY div Abs(DY) * C.IncH;
+    CW := CW + DX;
+    CH := CH + DY;
+    ConstrainClient(C, CW, CH);
+    SetFrameGeometry(C, C.X, C.Y, CW + E.L + E.R, CH + E.T + E.B);
+  end;
+end;
+
 procedure TWM.OnKeyPress(var Ev: TXKeyEvent);
 var
   St: cuint;
   I: Integer;
 begin
+  if FKbMode <> kmNone then
+  begin
+    KbKey(Ev);
+    Exit;
+  end;
   St := Ev.state and not CleanLocks;
   I := FindBinding(Ev.keycode, St);
   if FCycling then
@@ -1514,6 +1648,7 @@ var
   Cur: TCursor;
 begin
   if C.Maximized or C.Fullscreen or C.Iconic then Exit;
+  if (Kind = dgResize) and C.Shaded then Exit;
   FDrag := Kind;
   FDragClient := C;
   FDragHit := Hit;
@@ -1579,7 +1714,7 @@ procedure TWM.DefineHitCursor(C: TClient; XF, YF: Integer);
 var
   H: THit;
 begin
-  H := FTheme.HitTest(FOpts, C.W, C.H, XF, YF);
+  H := FTheme.HitTest(OptsFor(C), C.W, C.H, XF, YF);
   XDefineCursor(FDpy, C.Frame, FCursors[H.Kind]);
 end;
 
@@ -1621,6 +1756,7 @@ begin
   end;
   E := Ext(C);
   if C.Maximized or C.Fullscreen then begin SendConfigure(C); Exit; end;
+  if C.Shaded then SetShaded(C, False);
   ClientSizeOf(C, CW, CH);
   NX := C.X; NY := C.Y;
   if (Ev.value_mask and CWWidth) <> 0 then CW := Ev.width;
@@ -1714,7 +1850,7 @@ begin
   if C = nil then Exit;
   FocusClient(C, Ev.time);
   RaiseClient(C);
-  H := FTheme.HitTest(FOpts, C.W, C.H, Ev.x, Ev.y);
+  H := FTheme.HitTest(OptsFor(C), C.W, C.H, Ev.x, Ev.y);
   if Ev.button = 3 then
   begin
     { right-click on the titlebar: window menu }
@@ -1771,12 +1907,13 @@ begin
     C := FPressClient;
     FPressClient := nil;
     if Ev.window <> C.Frame then Exit;
-    H := FTheme.HitTest(FOpts, C.W, C.H, Ev.x, Ev.y);
+    H := FTheme.HitTest(OptsFor(C), C.W, C.H, Ev.x, Ev.y);
     if (H.Kind = hkButton) and (H.Letter = FPressLetter) then
       case H.Letter of
         'C': CloseClient(C);
         'M': ToggleMaximize(C);
         'H': Iconify(C);
+        'S': SetShaded(C, not C.Shaded);
       end;
   end;
 end;
@@ -1856,6 +1993,16 @@ begin
           Want := not C.Maximized;
         end;
         if Want <> C.Maximized then ToggleMaximize(C);
+      end
+      else if A = aShaded then
+      begin
+        case Act of
+          0: Want := False;
+          1: Want := True;
+        else
+          Want := not C.Shaded;
+        end;
+        SetShaded(C, Want);
       end
       else if A = aAbove then
       begin

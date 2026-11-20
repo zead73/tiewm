@@ -33,7 +33,7 @@ Run it ONLY on a display you mean to manage: `DISPLAY=:99 ./tiewm` (it refuses t
 the root; `TIEWM_THEME`, `TIEWM_FONT`, `TIEWM_DEBUG=1` are the only settings so far). SIGTERM/SIGINT hand all
 windows back to the root cleanly.
 
-Works (131 scenario checks, `tools/wmtest.sh`, scratch Xvfb on :99 only): manage/adopt/unmanage, centred
+Works (148 scenario checks, `tools/wmtest.sh`, scratch Xvfb on :99 only): manage/adopt/unmanage, centred
 placement (honours USPosition), themed frames with shape, click-to-focus with click replay to the app,
 raise on click, active/inactive repaint, title updates, titlebar drag and Alt+drag (also with Num/Caps Lock),
 Alt+right-drag resize, edge/corner resize with min-size and size-increment hints, close button
@@ -54,6 +54,14 @@ startup line (version, display, theme, desktops), which config was used and its 
 key reloads, shutdown, and any exception raised inside an event handler (which is caught: one buggy handler cannot take the
 session down). Lines are flushed immediately; a file over 512 KiB is rotated to `.1` at start; an unwritable log is ignored.
 `TIEWM_LOG=FILE|none` and `TIEWM_DEBUG=1` (debug level + mirror to stderr) override.
+
+Shade: the S button, the window menu, `_NET_WM_STATE_SHADED` (wmctrl -b add,shaded) or the `shade` key action roll a window up
+to its titlebar (frame resized, client stays mapped but clipped and still gets its real size in ConfigureNotify; no resize
+edges while rolled up; maximize/fullscreen/a client resize request unroll it first).
+
+Keyboard move/resize: Alt+F7 / Alt+F8 (`move_window` / `resize_window`) grab the keyboard; arrow keys move or resize by
+10 px (Shift: 1 px; step-sized windows such as terminals resize one step at a time, min/max honoured), Return confirms,
+Escape puts the window back. Not available for maximized, fullscreen, minimized windows (resize also not when shaded).
 
 Window menu (`twmenu.pas`, drawn with Xlib/Xft, no toolkit): right-click the titlebar, click the O button, or Alt+space
 (`window_menu`). Minimize, Maximize/Restore, Fullscreen, Always on top, On all workspaces, Move to Workspace N (the
@@ -94,7 +102,7 @@ click-to-activate / click-again-to-minimize / restore work, Alt+Tab, fullscreen,
 transient/centred/focused, Vivaldi F11 fullscreen on and off. Found and fixed: lxqt-panel's taskbar shows nothing
 unless every window has `_NET_WM_DESKTOP`.
 
-Deliberately not done: shade, other key bindings `--replace`,
+Deliberately not done: other key bindings, `--replace`,
 multi-monitor, `_NET_WM_STATE_BELOW` for normal windows, modal dialogs, adopting windows that are
 iconic when the WM starts, button prelight/pressed images, app icon in the menu button, session
 management, gravity/transient-for handling, `_NET_WM_MOVERESIZE`. Not yet run against the real LXQt

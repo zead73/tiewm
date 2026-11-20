@@ -16,7 +16,7 @@
 #title_font = Sans Bold 11
 
 # Titlebar buttons.  O menu, T stick, S shade, H hide (minimize), M maximize, C close.
-# Letters before "|" go on the left, after it on the right.  Only M, H and C do something yet.
+# Letters before "|" go on the left, after it on the right.  (T is not implemented.)
 #button_layout = O|SHMC
 
 # left, center or right
@@ -65,6 +65,12 @@
 #move_right = Ctrl+Alt+Shift+Right
 # window_menu: open the window menu for the focused window (also: right-click the titlebar)
 #window_menu = Alt+space
+# shade: roll the focused window up to its titlebar (also the S button and the window menu); no default key
+#shade =
+# move_window / resize_window: keyboard move/resize of the focused window. Arrow keys move or resize by
+# 10 px (Shift: 1 px), Return confirms, Escape cancels.
+#move_window = Alt+F7
+#resize_window = Alt+F8
 #
 # Direct desktop keys (none by default; Ctrl+F1..F12 are already taken by lxqt-globalkeyshortcuts):
 #goto_desktop_1 = Super+1

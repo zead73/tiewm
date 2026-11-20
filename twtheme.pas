@@ -51,6 +51,7 @@ type
     TextX, TextW: Integer;   { title text rectangle (x within frame); TextW 0 = none }
     Pressed, Prelight: Char; { button letter drawn in that state, or #0 }
     Toggled: string;         { button letters drawn in their toggled form }
+    Shaded: Boolean;         { title row only: no sides/bottom drawn, no resize edges }
   end;
 
   { TXfwmTheme }
@@ -205,6 +206,7 @@ begin
   Result.Pressed := #0;
   Result.Prelight := #0;
   Result.Toggled := '';
+  Result.Shaded := False;
 end;
 
 { TXfwmTheme }
@@ -485,6 +487,11 @@ begin
       Result.Letter := R[I].Letter;
       Exit;
     end;
+  if O.Shaded then
+  begin
+    if Y < M.TitleH then Result.Kind := hkTitle;
+    Exit;
+  end;
   { bottom corners overlap the side borders, so test them first }
   if (Y >= H - M.BLH) and (X < M.BLW) then begin Result.Kind := hkSW; Exit; end;
   if (Y >= H - M.BRH) and (X >= W - M.BRW) then begin Result.Kind := hkSE; Exit; end;
@@ -546,6 +553,7 @@ begin
     Img := ButtonImg(Rects[I].Letter, St, O);
     if Img <> nil then Dst.Blend(Img, Rects[I].X, Rects[I].Y);
   end;
+  if O.Shaded then Exit;
   { sides and bottom }
   Img := StatePart('left', St);
   if Img <> nil then Dst.BlendTiled(Img, 0, M.TitleH, Img.W, H - M.TitleH - M.BLH);

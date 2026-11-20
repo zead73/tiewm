@@ -484,7 +484,7 @@ newwin ot -t "Other" -w 300 -h 200 -c 227733 -s 300 -p 100,500; OT=$LAST_ID
 "$XDO" keydown Alt_L key space keyup Alt_L; sec 0.5; "$XDO" key Down key Down key Down key Down key Down key Return; sec 0.8
 [ "$(deskof "$MN")" = "0" ]; check "menu: and toggles it back to the current desktop" $?
 "$XDO" keydown Alt_L key space keyup Alt_L; sec 0.5
-"$XDO" key Down key Down key Down key Down key Down key Down key Down key Return; sec 0.8
+"$XDO" key Down key Down key Down key Down key Down key Down key Down key Down key Return; sec 0.8
 [ "$(deskof "$MN")" = "2" ] && [ "$(viewable "$MN")" = "0" ]; check "menu: Move to Workspace 3 (the current one is disabled and skipped)" $?
 wmctrl -s 0; stop_clients; sec 0.3
 newwin mm -t "Mouse menu" -w 300 -h 200 -c aa5522 -s 120 -p 500,300; MM=$LAST_ID
@@ -501,6 +501,49 @@ I=$(menuinfo); MX=$(echo "$I" | sed -n 's/.* x=\([0-9-]*\) .*/\1/p'); MY=$(echo 
 "$XDO" move $((MX+MW/2)) $((MY+MH-8)) click 1; sec 0.8
 grep -q WM_DELETE_WINDOW "$TMP/mm.log"; check "clicking the last row (Close) sends WM_DELETE_WINDOW" $?
 ! menuopen; check "the menu is gone after selecting" $?
+stop_clients
+
+echo "== 24. shade (button, menu, EWMH) and keyboard move/resize (Alt+F7 / Alt+F8)"
+frameh() { "$XG" | awk -v id="$(printf '0x%X' "$(printf '%d' "$1")")" '/^win=/{top=$0} /^  win=/{ if ($1=="win="id) print top}' | sed -n 's/.* h=\([0-9]*\) .*/\1/p'; }
+stop_clients
+newwin sh -t "Shade me" -w 300 -h 200 -c 996633 -s 300 -p 500,300; SH=$LAST_ID
+G=$(absgeom "$SH"); RX=$(field "$G" x); RY=$(field "$G" y); RW=$(field "$G" w)
+"$XDO" move $((RX+RW-82)) $((RY-T+8)) click 1; sec 0.7
+[ "$(frameh "$SH")" = "$T" ]; check "S button rolls the window up to its titlebar (frame height $(frameh "$SH"), expected $T)" $?
+xprop -id "$SH" _NET_WM_STATE | grep -q SHADED; check "_NET_WM_STATE has SHADED" $?
+tail -3 "$TMP/sh.log" | grep -q 'ConfigureNotify .* w=300 h=200 synthetic=1'; check "the client is still told its real size (300x200), not the rolled-up one" $?
+"$XDO" move $((RX+RW-82)) $((RY-T+8)) click 1; sec 0.7
+[ "$(frameh "$SH")" = "$((200+T+M))" ]; check "S button again unrolls it (frame height $(frameh "$SH"))" $?
+! xprop -id "$SH" _NET_WM_STATE | grep -q SHADED; check "SHADED is gone again" $?
+"$XDO" keydown Alt_L key space keyup Alt_L; sec 0.5; "$XDO" key Down key Down key Down key Down key Down key Down key Return; sec 0.8
+[ "$(frameh "$SH")" = "$T" ]; check "window menu: Shade (6th item) shades" $?
+"$XDO" keydown Alt_L key space keyup Alt_L; sec 0.5; "$XDO" key Down key Down key Down key Down key Down key Down key Return; sec 0.8
+[ "$(frameh "$SH")" = "$((200+T+M))" ]; check "window menu: and unshades" $?
+wmctrl -i -r "$SH" -b add,shaded; sec 0.6
+[ "$(frameh "$SH")" = "$T" ]; check "wmctrl -b add,shaded shades (_NET_WM_STATE client message)" $?
+"$XDO" keydown Super_L key Return keyup Super_L; sec 0.8
+G=$(absgeom "$SH"); [ "$(field "$G" h)" = "$((800-T-M))" ] && ! xprop -id "$SH" _NET_WM_STATE | grep -q SHADED; check "maximizing a shaded window unrolls it first ($G)" $?
+"$XDO" keydown Super_L key Return keyup Super_L; sec 0.6
+stop_clients
+newwin km -t "Key move" -w 300 -h 200 -c 336699 -s 300 -p 400,300 -m 200,150; KM=$LAST_ID
+G0=$(absgeom "$KM"); X0=$(field "$G0" x); Y0=$(field "$G0" y); W0=$(field "$G0" w); H0=$(field "$G0" h)
+"$XDO" keydown Alt_L key F7 keyup Alt_L key Right key Right key Down key Return; sec 0.6
+G=$(absgeom "$KM"); [ "$(field "$G" x)" -eq $((X0+20)) ] && [ "$(field "$G" y)" -eq $((Y0+10)) ]; check "Alt+F7, Right Right Down, Return moves the window by +20,+10 ($G)" $?
+"$XDO" keydown Alt_L key F7 keyup Alt_L key Left key Left key Up key Up key Escape; sec 0.6
+G2=$(absgeom "$KM"); [ "$G2" = "$G" ]; check "Escape cancels a keyboard move (window back where it was)" $?
+"$XDO" keydown Alt_L key F7 keyup Alt_L keydown Shift_L key Right keyup Shift_L key Return; sec 0.6
+G=$(absgeom "$KM"); [ "$(field "$G" x)" -eq $((X0+21)) ]; check "Shift+arrow moves by one pixel" $?
+"$XDO" key a; sec 0.3
+grep -q KeyPress "$TMP/km.log"; check "keyboard released after the move ended" $?
+"$XDO" keydown Alt_L key F8 keyup Alt_L key Right key Right key Down key Return; sec 0.6
+G=$(absgeom "$KM"); [ "$(field "$G" w)" -eq $((W0+20)) ] && [ "$(field "$G" h)" -eq $((H0+10)) ]; check "Alt+F8, Right Right Down, Return grows the window by +20,+10 ($G)" $?
+grep -q "w=$((W0+20)) h=$((H0+10)) synthetic" "$TMP/km.log"; check "the client was told about the new size" $?
+"$XDO" keydown Alt_L key F8 keyup Alt_L key Right key Right key Right key Escape; sec 0.6
+G2=$(absgeom "$KM"); [ "$(field "$G2" w)" -eq $((W0+20)) ]; check "Escape cancels a keyboard resize" $?
+"$XDO" keydown Alt_L key F8 keyup Alt_L
+for I in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do "$XDO" key Left; done
+"$XDO" key Return; sec 0.6
+G=$(absgeom "$KM"); [ "$(field "$G" w)" -eq 200 ]; check "keyboard resize stops at the window's minimum width (200)" $?
 stop_clients
 
 stop_wm
