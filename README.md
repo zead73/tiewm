@@ -128,3 +128,14 @@ Text rules measured from xfwm4 (Sans Bold 11, Xvfb 96 dpi):
 
 Build tools: `fpc -Mobjfpc -Sh -O1 -Fu.. themetest.pas` (from `tools/`). `framecheck` and `shapewin` need
 `DISPLAY` pointing at an X server (Xvfb is fine).
+
+## Third-party material
+
+The images `ref/daloa-full.png`, `ref/frame-active-310x224.png`, `ref/frame-inactive-410x324.png` and
+`out/tiewm-demo.png` are renders of the **Daloa** xfwm4 theme (made by real xfwm4 and by tiewm). Daloa is
+GPL-licensed ("Created May 2006 by Mike Massonnet, modified by Olivier Fourdan, released under the GNU GPL", per its
+README), so these images are covered by the GPL of that theme, **not** by the license of tiewm's source code.
+They are test fixtures and a demo screenshot only.
+
+No theme files are included in this repository: themes are read at runtime from `/usr/share/themes/<name>/xfwm4` or
+`~/.themes/<name>/xfwm4`, and each theme keeps its own license.
