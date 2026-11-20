@@ -103,6 +103,20 @@ click-to-activate / click-again-to-minimize / restore work, Alt+Tab, fullscreen,
 transient/centred/focused, Vivaldi F11 fullscreen on and off. Found and fixed: lxqt-panel's taskbar shows nothing
 unless every window has `_NET_WM_DESKTOP`.
 
+## Planned
+
+- **Remove the titlebar of a window that already draws its own** (Electron/CSD apps such as the Claude desktop app),
+  and remember the choice in the config file.
+  1. Honour `_MOTIF_WM_HINTS` (decorations = 0) automatically: the Claude desktop window already asks for no
+     decorations (`_MOTIF_WM_HINTS = 0x2, 0, 0, 0, 0`, `WM_CLASS = com.anthropic.claude`) but tiewm ignores it and
+     frames it anyway.
+  2. A manual toggle ("No titlebar" in the window menu, maybe a key action) for apps that do not ask.
+  3. Persist it per application in the config file, matched by `WM_CLASS`, e.g. a `[windows]` section with
+     `com.anthropic.claude = no_titlebar` (and an `ignore`/`titlebar` override for the opposite case). The menu toggle
+     writes that line itself, keeping the user's comments and the rest of the file intact.
+  4. Design points: undecorated windows still need a way to move (Alt+drag already works) and resize (thin border
+     option or Alt+right-drag), frame extents become 0 or the border only, and `_NET_FRAME_EXTENTS` must follow.
+
 Deliberately not done: other key bindings, `--replace`,
 multi-monitor, modal dialogs, adopting windows that are
 iconic when the WM starts, button prelight/pressed images, app icon in the menu button, session
