@@ -110,7 +110,7 @@ unless every window has `_NET_WM_DESKTOP`.
   1. Honour `_MOTIF_WM_HINTS` (decorations = 0) automatically: the Claude desktop window already asks for no
      decorations (`_MOTIF_WM_HINTS = 0x2, 0, 0, 0, 0`, `WM_CLASS = com.anthropic.claude`) but tiewm ignores it and
      frames it anyway.
-  2. A manual toggle ("No titlebar" in the window menu, maybe a key action) for apps that do not ask.
+  2. A manual toggle for apps that do not ask: a "No titlebar" entry in the window menu (menu only, no key action).
   3. Persist it per application in the config file, matched by `WM_CLASS`, e.g. a `[windows]` section with
      `com.anthropic.claude = no_titlebar` (and an `ignore`/`titlebar` override for the opposite case). The menu toggle
      writes that line itself, keeping the user's comments and the rest of the file intact.
