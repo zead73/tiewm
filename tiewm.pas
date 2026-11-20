@@ -4,15 +4,22 @@ program tiewm;
   Run it only on a display you mean to manage; it refuses to start if
   another window manager already owns the root window.
 
-    DISPLAY=:99 tiewm            theme from TIEWM_THEME (default Daloa),
-                                 title font from TIEWM_FONT (default "Sans Bold 11")
-    TIEWM_DEBUG=1                log to stderr
-  SIGTERM/SIGINT shut it down cleanly and hand all windows back to the root. }
+    tiewm                        start (reads ~/.config/tiewm/tiewm.conf, see tiewm.conf.example)
+    tiewm --check-config [FILE]  parse the config, print what it means and any warnings, exit
+    tiewm --version
+
+  Environment: TIEWM_CONFIG=FILE, TIEWM_THEME, TIEWM_FONT, TIEWM_DESKTOPS override the config;
+  TIEWM_DEBUG=1 logs to stderr.
+  SIGTERM/SIGINT shut it down cleanly and hand all windows back to the root;
+  SIGHUP re-reads the key bindings. }
 
 {$mode objfpc}{$H+}
 
 uses
-  SysUtils, BaseUnix, ctypes, x, xlib, twwm;
+  SysUtils, BaseUnix, ctypes, x, xlib, twconfig, twwm;
+
+const
+  Version = '0.3';
 
 var
   GWm: TWM;
@@ -22,27 +29,54 @@ begin
   if GWm <> nil then GWm.Quit := True;
 end;
 
+procedure OnHup(Sig: cint); cdecl;
+begin
+  if GWm <> nil then GWm.RequestReload;
+end;
+
 var
   Dpy: PDisplay;
-  ThemeName, FontName: string;
+  Cfg: TConfig;
+  Path: string;
+  I: Integer;
 begin
+  if (ParamCount >= 1) and (ParamStr(1) = '--version') then
+  begin
+    WriteLn('tiewm ', Version);
+    Halt(0);
+  end;
+  if (ParamCount >= 1) and (ParamStr(1) = '--check-config') then
+  begin
+    if ParamCount >= 2 then Path := ParamStr(2) else Path := DefaultConfigPath;
+    Cfg := LoadConfig(Path);
+    Write(DescribeConfig(Cfg));
+    if Length(Cfg.Warnings) > 0 then Halt(1);
+    Halt(0);
+  end;
+  if ParamCount >= 1 then
+  begin
+    WriteLn(StdErr, 'tiewm: unknown option ', ParamStr(1));
+    Halt(2);
+  end;
   if GetEnvironmentVariable('DISPLAY') = '' then
   begin
     WriteLn(StdErr, 'tiewm: DISPLAY is not set');
     Halt(1);
   end;
+  Cfg := LoadConfig(DefaultConfigPath);
+  for I := 0 to High(Cfg.Warnings) do
+    begin
+      WriteLn(StdErr, 'tiewm: ', Cfg.Path, ': ', Cfg.Warnings[I]);
+      Flush(StdErr);
+    end;
   Dpy := XOpenDisplay(nil);
   if Dpy = nil then
   begin
     WriteLn(StdErr, 'tiewm: cannot open display ', GetEnvironmentVariable('DISPLAY'));
     Halt(1);
   end;
-  ThemeName := GetEnvironmentVariable('TIEWM_THEME');
-  if ThemeName = '' then ThemeName := 'Daloa';
-  FontName := GetEnvironmentVariable('TIEWM_FONT');
-  if FontName = '' then FontName := 'Sans Bold 11';
   try
-    GWm := TWM.Create(Dpy, ThemeName, FontName);
+    GWm := TWM.Create(Dpy, Cfg);
   except
     on E: Exception do
     begin
@@ -58,6 +92,7 @@ begin
   end;
   FpSignal(SIGTERM, @OnSignal);
   FpSignal(SIGINT, @OnSignal);
+  FpSignal(SIGHUP, @OnHup);
   GWm.Run;
   GWm.Shutdown;
   XCloseDisplay(Dpy);

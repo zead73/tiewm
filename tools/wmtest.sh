@@ -8,6 +8,9 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(dirname "$HERE")"
 TMP="${WMTEST_TMP:-/tmp/tiewm-test}/wmtest"
 mkdir -p "$TMP"
+# never read the real ~/.config/tiewm/tiewm.conf: tests use defaults unless a scenario says otherwise
+export TIEWM_CONFIG="$TMP/none.conf"
+rm -f "$TMP/none.conf"
 TW="$HERE/testwin"; XDO="$HERE/xdo"; XG="$HERE/xgeom"; WM="$ROOT/tiewm"
 PASS=0; FAIL=0
 
@@ -336,6 +339,89 @@ FOC=$(hexnorm "$(active)")
 [ "$(cur)" = "1" ] && [ "$(deskof "$FOC")" = "1" ] && [ "$(viewable "$FOC")" = "1" ] && [ "$(hexnorm "$(active)")" = "$FOC" ]; check "Ctrl+Alt+Shift+Right moves the focused window to desktop 1 and follows it" $?
 wmctrl -s 0; sec 0.4
 stop_clients
+
+echo "== 21. config file: parsing, warnings, theme/desktops/key overrides, SIGHUP reload, env override"
+cat >"$TMP/c1.conf" <<'EOC'
+# test config
+theme = Kokodi
+desktops = 2
+title_align = center
+[colors]
+active_color_1 = #aa3300
+[keys]
+close = Super+q
+cycle = Super+Tab, Alt+Tab
+cycle_back = none
+iconify = none
+goto_desktop_2 = Alt+2
+EOC
+cat >"$TMP/c2.conf" <<'EOC'
+bogus_setting = 1
+desktops = 99
+title_align = diagonal
+nonsense line
+[colors]
+active_color_1 = blue
+[keys]
+close = Hyper+F4
+frobnicate = Alt+F1
+maximize = Alt+F4
+[nowhere]
+EOC
+OUT=$("$WM" --check-config "$TMP/none.conf" 2>&1); RC=$?
+[ $RC -eq 0 ] && echo "$OUT" | grep -q 'not found, using defaults' && echo "$OUT" | grep -q 'key close = Alt+F4' && echo "$OUT" | grep -q 'key move_right = Ctrl+Alt+Shift+Right'; check "--check-config with no file: defaults, exit 0" $?
+OUT=$("$WM" --check-config "$TMP/c1.conf" 2>&1); RC=$?
+[ $RC -eq 0 ] && echo "$OUT" | grep -q 'theme = Kokodi' && echo "$OUT" | grep -q 'desktops = 2' && echo "$OUT" | grep -q 'title_align = center' && echo "$OUT" | grep -q 'active_color_1 = #AA3300'; check "--check-config reads general and colour settings" $?
+echo "$OUT" | grep -q 'key close = Super+q' && echo "$OUT" | grep -q 'key iconify = (none)' && echo "$OUT" | grep -q 'key cycle_back = (none)' && echo "$OUT" | grep -q 'key cycle = Super+Tab' && echo "$OUT" | grep -q 'key goto_desktop_2 = Alt+2' && echo "$OUT" | grep -q 'key maximize = Super+Return'; check "key overrides replace per action; unlisted actions keep their defaults" $?
+OUT=$("$WM" --check-config "$TMP/c2.conf" 2>&1); RC=$?
+[ $RC -eq 1 ] && echo "$OUT" | grep -q 'line 1: unknown setting' && echo "$OUT" | grep -q 'line 2: desktops must be 1..20' && echo "$OUT" | grep -q 'line 3: title_align' && echo "$OUT" | grep -q 'line 4: expected' && echo "$OUT" | grep -q 'line 6: .*colour' && echo "$OUT" | grep -q 'line 8: cannot parse key combination "Hyper+F4"' && echo "$OUT" | grep -q 'line 9: unknown key action' && echo "$OUT" | grep -q 'line 11: unknown section'; check "bad config: exit 1 and a warning per problem with its line number" $?
+echo "$OUT" | grep -q 'line 10: Alt+F4 is already bound to'; check "a combination bound twice is reported (first binding wins)" $?
+
+stop_wm; stop_clients
+export TIEWM_CONFIG="$TMP/c2.conf"; start_wm
+newwin cfg2 -t "Broken config" -w 300 -h 200 -c 4466aa -s 60 -p 400,300
+xprop -id "$LAST_ID" _NET_FRAME_EXTENTS | grep -q "= $M, $M, $T, $M" && [ "$(wmctrl -d | wc -l)" = "4" ]; check "a broken config still starts with the defaults (Daloa, 4 desktops)" $?
+stop_wm; stop_clients
+export TIEWM_CONFIG="$TMP/c1.conf"; start_wm
+newwin cfg1 -t "Custom config" -w 300 -h 200 -c 66aa44 -s 90 -p 400,300; C1=$LAST_ID
+xprop -id "$C1" _NET_FRAME_EXTENTS | grep -q "= 6, 6, 29, 6"; check "theme = Kokodi: frame extents come from that theme (6,6,29,6)" $?
+[ "$(wmctrl -d | wc -l)" = "2" ]; check "desktops = 2" $?
+"$XDO" keydown Alt_L key F4 keyup Alt_L; sec 0.6
+! grep -q WM_DELETE_WINDOW "$TMP/cfg1.log"; check "Alt+F4 no longer closes (close was rebound)" $?
+"$XDO" keydown Super_L key q keyup Super_L; sec 0.8
+grep -q WM_DELETE_WINDOW "$TMP/cfg1.log"; check "Super+q closes (new binding)" $?
+newwin cfg3 -t "Second" -w 300 -h 200 -c aa4466 -s 90 -p 700,300; C3=$LAST_ID
+newwin cfg4 -t "Third" -w 300 -h 200 -c 44aaaa -s 90 -p 100,500; C4=$LAST_ID
+"$XDO" keydown Alt_L key F9 keyup Alt_L; sec 0.6
+[ "$(viewable "$C4")" = "1" ]; check "iconify = none: Alt+F9 does nothing" $?
+"$XDO" keydown Super_L key Tab keyup Super_L; sec 0.5
+[ "$(hexnorm "$(active)")" = "$(hexnorm "$C3")" ]; check "cycle = Super+Tab: cycling starts with Super and ends when it is released" $?
+"$XDO" key a; sec 0.3
+grep -q KeyPress "$TMP/cfg3.log"; check "keyboard released after Super+Tab (a plain key reaches the focused app)" $?
+"$XDO" keydown Alt_L key 2 keyup Alt_L; sec 0.6
+[ "$(cur)" = "1" ]; check "goto_desktop_2 = Alt+2 switches to desktop 2" $?
+"$XDO" keydown Alt_L key F4 keyup Alt_L; sec 0.3
+cat >"$TMP/c1.conf" <<'EOC'
+theme = Kokodi
+desktops = 2
+[keys]
+close = Alt+F4
+EOC
+kill -HUP "$WMPID"; sec 0.8
+wmctrl -s 0; sec 0.5
+"$XDO" move 150 600 click 1; sec 0.4
+"$XDO" keydown Alt_L key F4 keyup Alt_L; sec 0.8
+grep -q WM_DELETE_WINDOW "$TMP/cfg4.log"; check "SIGHUP reloads the key bindings (Alt+F4 closes again, no restart)" $?
+stop_wm; stop_clients
+export TIEWM_CONFIG="$TMP/c1.conf"; TIEWM_DESKTOPS=3 start_wm
+[ "$(wmctrl -d | wc -l)" = "3" ]; check "TIEWM_DESKTOPS in the environment overrides the file" $?
+stop_wm; stop_clients
+printf 'theme = NoSuchTheme\n' >"$TMP/c3.conf"; export TIEWM_CONFIG="$TMP/c3.conf"; start_wm
+newwin cfg5 -t "Bad theme" -w 300 -h 200 -c 8866cc -s 60 -p 400,300
+xprop -id "$LAST_ID" _NET_FRAME_EXTENTS | grep -q "= $M, $M, $T, $M"; check "an unknown theme falls back to Daloa instead of failing" $?
+grep -q 'not found, using Daloa' "$TMP/wm.log"; check "and says so on stderr" $?
+stop_wm; stop_clients
+export TIEWM_CONFIG="$TMP/none.conf"; start_wm
 
 stop_wm
 

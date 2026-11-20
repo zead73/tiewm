@@ -47,6 +47,12 @@ const
   { inactive_text_color is not in Daloa's themerc; this is what xfwm4 showed }
   DefaultInactiveText = $919190;
 
+var
+  { set from the config file by the window manager }
+  TitleFontGrey: Boolean = True;
+  TitleFontHint: Integer = 3;
+  InactiveTextColor: LongWord = DefaultInactiveText;
+
 { Draws the whole frame (graphics + title) into a new pixmap and builds the
   shape mask for it. FrameW/FrameH are the outer size, the client sits in
   the hole. Caller frees both pixmaps. }
@@ -133,7 +139,7 @@ begin
   if St = wsActive then
     TextRGB := ParseColorSpec(Theme, Theme.RC(ColorKey, ''), $FFFFFF)
   else
-    TextRGB := ParseColorSpec(Theme, Theme.RC(ColorKey, ''), DefaultInactiveText);
+    TextRGB := ParseColorSpec(Theme, Theme.RC(ColorKey, ''), InactiveTextColor);
   if LowerCase(Theme.RC(ShadowKey, 'false')) = 'frame' then Mode := smFrame4
   else if LowerCase(Theme.RC(ShadowKey, 'false')) = 'true' then Mode := smUnder
   else Mode := smNone;
@@ -160,7 +166,7 @@ begin
   FDpy := ADpy;
   FName := PangoToFontconfig(PangoName);
   { greyscale AA + full hinting: what xfwm4's titles matched best here (2026-11-20) }
-  FFont := OpenXftFont(ADpy, AScreen, FName, True, 3);
+  FFont := OpenXftFont(ADpy, AScreen, FName, TitleFontGrey, TitleFontHint);
   if FFont = nil then
     raise Exception.Create('cannot open font ' + FName);
 end;

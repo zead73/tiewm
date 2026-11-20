@@ -33,7 +33,7 @@ Run it ONLY on a display you mean to manage: `DISPLAY=:99 ./tiewm` (it refuses t
 the root; `TIEWM_THEME`, `TIEWM_FONT`, `TIEWM_DEBUG=1` are the only settings so far). SIGTERM/SIGINT hand all
 windows back to the root cleanly.
 
-Works (88 scenario checks, `tools/wmtest.sh`, scratch Xvfb on :99 only): manage/adopt/unmanage, centred
+Works (106 scenario checks, `tools/wmtest.sh`, scratch Xvfb on :99 only): manage/adopt/unmanage, centred
 placement (honours USPosition), themed frames with shape, click-to-focus with click replay to the app,
 raise on click, active/inactive repaint, title updates, titlebar drag and Alt+drag (also with Num/Caps Lock),
 Alt+right-drag resize, edge/corner resize with min-size and size-increment hints, close button
@@ -48,6 +48,15 @@ all with Caps/Num Lock; fullscreen (`_NET_WM_STATE_FULLSCREEN`, no decorations, 
 iconify (H button, Alt+F9, `WM_CHANGE_STATE`, `_NET_WM_STATE_HIDDEN`, WM_STATE Iconic, restored by
 `_NET_ACTIVE_WINDOW` / Alt+Tab / the client mapping itself again); `WM_TRANSIENT_FOR` dialogs (centred over the
 parent, kept above it when it is raised, iconified with it, focus returns to the parent when the dialog closes).
+
+Config file `~/.config/tiewm/tiewm.conf` (`tiewm.conf.example` documents everything; `TIEWM_CONFIG=FILE` picks another):
+theme, title font and alignment, button layout, number of desktops, font hinting, palette colours, and every key binding
+(actions: close, cycle, cycle_back, maximize, iconify, fullscreen, desktop_left/right, move_left/right,
+goto_desktop_N, move_to_desktop_N; listing an action replaces its defaults, `none` disables it). A bad line is only a
+warning and the default stays; an unknown theme falls back to Daloa. `tiewm --check-config [FILE]` validates a file
+without a display (exit 1 if there are warnings); SIGHUP re-reads the key bindings in a running tiewm. Environment
+variables TIEWM_THEME / TIEWM_FONT / TIEWM_DESKTOPS override the file. Tests never read the real config (they point
+TIEWM_CONFIG at a missing file).
 
 Workspaces: 4 desktops (`TIEWM_DESKTOPS=N`, 1..20), `_NET_NUMBER_OF_DESKTOPS` / `_CURRENT_DESKTOP` / `_DESKTOP_NAMES`
 ("Workspace N") / per-desktop `_NET_WORKAREA`, `_NET_WM_DESKTOP` on every client (and its client message to move a window),
@@ -73,9 +82,9 @@ click-to-activate / click-again-to-minimize / restore work, Alt+Tab, fullscreen,
 transient/centred/focused, Vivaldi F11 fullscreen on and off. Found and fixed: lxqt-panel's taskbar shows nothing
 unless every window has `_NET_WM_DESKTOP`.
 
-Deliberately not done: shade, other key bindings (no config file for keys yet), `--replace`,
+Deliberately not done: shade, other key bindings `--replace`,
 multi-monitor, window menu, `_NET_WM_STATE_ABOVE`, modal dialogs, adopting windows that are
-iconic when the WM starts, button prelight/pressed images, app icon in the menu button, config file, session
+iconic when the WM starts, button prelight/pressed images, app icon in the menu button, session
 management, gravity/transient-for handling, `_NET_WM_MOVERESIZE`. Not yet run against the real LXQt
 session or lxqt-panel.
 

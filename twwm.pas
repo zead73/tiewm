@@ -13,7 +13,7 @@ interface
 
 uses
   ctypes, SysUtils, Classes, BaseUnix, x, xlib, xutil, xatom, cursorfont, keysym,
-  twimage, twtheme, twxft, twxdraw, twxshape;
+  twimage, twtheme, twxft, twxdraw, twxshape, twconfig;
 
 type
   TClient = class
@@ -78,7 +78,9 @@ type
     FDragClient: TClient;
     FDragHit: THitKind;
     FDragPX, FDragPY, FDragX, FDragY, FDragW, FDragH: Integer;
-    FKcLeft, FKcRight, FKcF4, FKcTab, FKcReturn, FKcF9, FKcF11, FKcAltL, FKcAltR: cuint;
+    FCfg: TConfig;
+    FCycleMods: cuint;
+    FReload: Boolean;
     FCycling: Boolean;
     FCycleList: TList;
     FCycleIdx: Integer;
@@ -134,9 +136,13 @@ type
     procedure RaiseTransients(C: TClient; Depth: Integer);
     procedure SetFrameExtentsProp(C: TClient);
     procedure GrabKeys;
+    function FindBinding(Kc, St: cuint): Integer;
+    procedure RunAction(const B: TKeyBinding; ATime: culong);
+    procedure MoveFocusedTo(K: Integer; ATime: culong);
+    function TitleAlign: TTitleAlign;
     procedure OnKeyPress(var Ev: TXKeyEvent);
     procedure OnKeyRelease(var Ev: TXKeyEvent);
-    procedure StartCycle(Dir: Integer; ATime: culong);
+    procedure StartCycle(Dir: Integer; ATime: culong; Mods: cuint);
     procedure StepCycle(Dir: Integer);
     procedure EndCycle;
     procedure UpdateClientList;
@@ -158,12 +164,14 @@ type
     procedure OnProperty(var Ev: TXPropertyEvent);
     procedure DefineHitCursor(C: TClient; XF, YF: Integer);
   public
-    constructor Create(ADpy: PDisplay; const ThemeName, FontName: string);
+    constructor Create(ADpy: PDisplay; const ACfg: TConfig);
     destructor Destroy; override;
     { selects the root events; False if another WM already owns them }
     function Claim: Boolean;
     procedure Run;
     procedure Shutdown;
+    { SIGHUP: re-read the key bindings from the config file }
+    procedure RequestReload;
     property Quit: Boolean read FQuit write FQuit;
   end;
 
@@ -191,34 +199,57 @@ begin
   if GetEnvironmentVariable('TIEWM_DEBUG') <> '' then
     WriteLn(StdErr, 'tiewm: X error code=', Err^.error_code, ' request=', Err^.request_code,
       ' resource=0x', IntToHex(Err^.resourceid, 1));
+  if GetEnvironmentVariable('TIEWM_DEBUG') <> '' then Flush(StdErr);
   Result := 0;
 end;
 
 { ---- TWM ---- }
 
-constructor TWM.Create(ADpy: PDisplay; const ThemeName, FontName: string);
+constructor TWM.Create(ADpy: PDisplay; const ACfg: TConfig);
 begin
   inherited Create;
+  FCfg := ACfg;
   FDpy := ADpy;
   FScr := DefaultScreen(FDpy);
   FRoot := DefaultRootWindow(FDpy);
   FScrW := DisplayWidth(FDpy, FScr);
   FScrH := DisplayHeight(FDpy, FScr);
   FDebug := GetEnvironmentVariable('TIEWM_DEBUG') <> '';
-  FNumDesk := StrToIntDef(GetEnvironmentVariable('TIEWM_DESKTOPS'), 4);
+  FNumDesk := FCfg.NumDesktops;
   if FNumDesk < 1 then FNumDesk := 1;
   if FNumDesk > 20 then FNumDesk := 20;
   FCurDesk := 0;
   FClients := TList.Create;
   FMru := TList.Create;
   FCycleList := TList.Create;
+  TitleFontGrey := FCfg.FontGreyscale;
+  TitleFontHint := FCfg.FontHinting;
+  InactiveTextColor := FCfg.InactiveText;
   FTheme := TXfwmTheme.Create;
-  if not FTheme.Load(ThemeName, DefaultPalette) then
-    raise Exception.Create('xfwm4 theme not found: ' + ThemeName);
-  FFont := TTitleFont.Create(FDpy, FScr, FontName);
+  { a wrong theme name must not take the session down: fall back }
+  if not FTheme.Load(FCfg.Theme, FCfg.Palette) then
+  begin
+    WriteLn(StdErr, 'tiewm: xfwm4 theme "', FCfg.Theme, '" not found, using Daloa');
+    Flush(StdErr);
+    if not FTheme.Load('Daloa', FCfg.Palette) then
+      raise Exception.Create('xfwm4 theme not found: ' + FCfg.Theme + ' (and no Daloa to fall back to)');
+  end;
+  FFont := TTitleFont.Create(FDpy, FScr, FCfg.TitleFont);
   FOpts := DefaultFrameOpts(FTheme);
-  FOpts.Layout := 'O|SHMC';
+  FOpts.Layout := FCfg.ButtonLayout;
   InternAtoms;
+end;
+
+function TWM.TitleAlign: TTitleAlign;
+begin
+  if FCfg.TitleAlign = 'center' then Result := taCenter
+  else if FCfg.TitleAlign = 'right' then Result := taRight
+  else Result := taLeft;
+end;
+
+procedure TWM.RequestReload;
+begin
+  FReload := True;
 end;
 
 destructor TWM.Destroy;
@@ -233,7 +264,11 @@ end;
 
 procedure TWM.Log(const Msg: string);
 begin
-  if FDebug then WriteLn(StdErr, 'tiewm: ', Msg);
+  if FDebug then
+  begin
+    WriteLn(StdErr, 'tiewm: ', Msg);
+    Flush(StdErr);
+  end;
 end;
 
 procedure TWM.InternAtoms;
@@ -802,9 +837,9 @@ begin
   if (not Force) and C.Painted and (C.PaintedActive = Act) and (C.PaintedW = C.W) and
      (C.PaintedH = C.H) and (C.PaintedName = C.Name) then Exit;
   if Act then
-    Pm := PaintFrame(FDpy, FScr, FTheme, FFont, wsActive, C.W, C.H, C.Name, taLeft, Mask, TX, BY)
+    Pm := PaintFrame(FDpy, FScr, FTheme, FFont, wsActive, C.W, C.H, C.Name, TitleAlign, Mask, TX, BY)
   else
-    Pm := PaintFrame(FDpy, FScr, FTheme, FFont, wsInactive, C.W, C.H, C.Name, taLeft, Mask, TX, BY);
+    Pm := PaintFrame(FDpy, FScr, FTheme, FFont, wsInactive, C.W, C.H, C.Name, TitleAlign, Mask, TX, BY);
   XSetWindowBackgroundPixmap(FDpy, C.Frame, Pm);
   XShapeCombineMask(FDpy, C.Frame, ShapeBounding, 0, 0, Mask, ShapeSet);
   XClearWindow(FDpy, C.Frame);
@@ -1245,41 +1280,66 @@ end;
 procedure TWM.GrabKeys;
 const
   Locks: array[0..3] of cuint = (0, LockMask, Mod2Mask, LockMask or Mod2Mask);
-
-  procedure G(Ks: cuint; Mods: cuint);
-  var
-    Kc: cuint;
-    K: Integer;
-  begin
-    Kc := XKeysymToKeycode(FDpy, TKeySym(Ks));
-    if Kc = 0 then Exit;
-    for K := 0 to High(Locks) do
-      XGrabKey(FDpy, Kc, Mods or Locks[K], FRoot, 0, GrabModeAsync, GrabModeAsync);
-  end;
-
+var
+  I, K: Integer;
 begin
-  FKcLeft := XKeysymToKeycode(FDpy, TKeySym(XK_Left));
-  FKcRight := XKeysymToKeycode(FDpy, TKeySym(XK_Right));
-  FKcF4 := XKeysymToKeycode(FDpy, TKeySym(XK_F4));
-  FKcTab := XKeysymToKeycode(FDpy, TKeySym(XK_Tab));
-  FKcReturn := XKeysymToKeycode(FDpy, TKeySym(XK_Return));
-  FKcF9 := XKeysymToKeycode(FDpy, TKeySym(XK_F9));
-  FKcF11 := XKeysymToKeycode(FDpy, TKeySym(XK_F11));
-  FKcAltL := XKeysymToKeycode(FDpy, TKeySym(XK_Alt_L));
-  FKcAltR := XKeysymToKeycode(FDpy, TKeySym(XK_Alt_R));
-  G(XK_F4, Mod1Mask);
-  G(XK_Tab, Mod1Mask);
-  G(XK_Tab, Mod1Mask or ShiftMask);
-  G(XK_F9, Mod1Mask);
-  G(XK_F11, Mod1Mask);
-  G(XK_Return, Mod4Mask);
-  G(XK_Left, ControlMask or Mod1Mask);
-  G(XK_Right, ControlMask or Mod1Mask);
-  G(XK_Left, ControlMask or Mod1Mask or ShiftMask);
-  G(XK_Right, ControlMask or Mod1Mask or ShiftMask);
+  XUngrabKey(FDpy, 0, AnyModifier, FRoot);   { 0 = AnyKey: also used when the bindings are reloaded }
+  for I := 0 to High(FCfg.Keys) do
+  begin
+    FCfg.Keys[I].Kc := XKeysymToKeycode(FDpy, FCfg.Keys[I].Sym);
+    if FCfg.Keys[I].Kc = 0 then
+    begin
+      Log('no keycode for ' + FormatCombo(FCfg.Keys[I].Sym, FCfg.Keys[I].Mods));
+      Continue;
+    end;
+    for K := 0 to High(Locks) do
+      XGrabKey(FDpy, FCfg.Keys[I].Kc, FCfg.Keys[I].Mods or Locks[K], FRoot, 0, GrabModeAsync, GrabModeAsync);
+  end;
 end;
 
-procedure TWM.StartCycle(Dir: Integer; ATime: culong);
+function TWM.FindBinding(Kc, St: cuint): Integer;
+var
+  I: Integer;
+begin
+  for I := 0 to High(FCfg.Keys) do
+    if (FCfg.Keys[I].Kc = Kc) and (FCfg.Keys[I].Mods = St) then Exit(I);
+  Result := -1;
+end;
+
+{ moves the focused window to desktop K (0-based) and goes there with it }
+procedure TWM.MoveFocusedTo(K: Integer; ATime: culong);
+var
+  C: TClient;
+begin
+  if (FFocused = nil) or (FFocused.Desktop < 0) then Exit;
+  if (K < 0) or (K >= FNumDesk) then Exit;
+  C := FFocused;
+  C.Desktop := K;
+  SetDesktopProp(C);
+  UpdateNetState(C);
+  SwitchDesktop(K, ATime);
+  FocusClient(C, ATime);
+end;
+
+procedure TWM.RunAction(const B: TKeyBinding; ATime: culong);
+begin
+  case B.Action of
+    kaClose: if FFocused <> nil then CloseClient(FFocused);
+    kaCycle: StartCycle(1, ATime, B.Mods);
+    kaCycleBack: StartCycle(-1, ATime, B.Mods);
+    kaMaximize: if FFocused <> nil then ToggleMaximize(FFocused);
+    kaIconify: if FFocused <> nil then Iconify(FFocused);
+    kaFullscreen: if FFocused <> nil then SetFullscreen(FFocused, not FFocused.Fullscreen);
+    kaDeskLeft: SwitchDesktop(FCurDesk - 1, ATime);
+    kaDeskRight: SwitchDesktop(FCurDesk + 1, ATime);
+    kaMoveLeft: if FFocused <> nil then MoveFocusedTo(FFocused.Desktop - 1, ATime);
+    kaMoveRight: if FFocused <> nil then MoveFocusedTo(FFocused.Desktop + 1, ATime);
+    kaGotoDesk: SwitchDesktop(B.Arg - 1, ATime);
+    kaMoveToDesk: MoveFocusedTo(B.Arg - 1, ATime);
+  end;
+end;
+
+procedure TWM.StartCycle(Dir: Integer; ATime: culong; Mods: cuint);
 var
   I: Integer;
   Rw, Cw: TWindow;
@@ -1291,14 +1351,17 @@ begin
     if OnDesk(TClient(FMru[I])) then FCycleList.Add(FMru[I]);
   if FCycleList.Count < 2 then begin FCycleList.Clear; Exit; end;
   FCycleIdx := 0;
-  { while Alt stays down we own the keyboard, so Tab repeats and the Alt release reach us }
+  { cycling ends when the modifier(s) that started it are released; Shift alone does not count }
+  FCycleMods := Mods and not ShiftMask;
+  if FCycleMods = 0 then FCycleMods := Mods;
+  { while the modifier stays down we own the keyboard, so key repeats and the release reach us }
   if XGrabKeyboard(FDpy, FRoot, 0, GrabModeAsync, GrabModeAsync, ATime) = GrabSuccess then
     FCycling := True;
   StepCycle(Dir);
   if FCycling then
   begin
-    { Alt may already be up if the key press was very short }
-    if XQueryPointer(FDpy, FRoot, @Rw, @Cw, @Rx, @Ry, @Wx, @Wy, @Mask) and ((Mask and Mod1Mask) = 0) then
+    { the modifier may already be up if the key press was very short }
+    if XQueryPointer(FDpy, FRoot, @Rw, @Cw, @Rx, @Ry, @Wx, @Wy, @Mask) and ((Mask and FCycleMods) = 0) then
       EndCycle;
   end
   else
@@ -1325,58 +1388,31 @@ end;
 procedure TWM.OnKeyPress(var Ev: TXKeyEvent);
 var
   St: cuint;
-  K: Integer;
-  C: TClient;
+  I: Integer;
 begin
   St := Ev.state and not CleanLocks;
+  I := FindBinding(Ev.keycode, St);
   if FCycling then
   begin
-    if Ev.keycode = FKcTab then
-      if (Ev.state and ShiftMask) <> 0 then StepCycle(-1) else StepCycle(1);
+    if I >= 0 then
+      case FCfg.Keys[I].Action of
+        kaCycle: StepCycle(1);
+        kaCycleBack: StepCycle(-1);
+      end;
     Exit;
   end;
-  if (St = Mod1Mask) and (Ev.keycode = FKcF4) then
-  begin
-    if FFocused <> nil then CloseClient(FFocused);
-  end
-  else if (St = Mod1Mask) and (Ev.keycode = FKcTab) then StartCycle(1, Ev.time)
-  else if (St = (Mod1Mask or ShiftMask)) and (Ev.keycode = FKcTab) then StartCycle(-1, Ev.time)
-  else if (St = Mod1Mask) and (Ev.keycode = FKcF9) then
-  begin
-    if FFocused <> nil then Iconify(FFocused);
-  end
-  else if (St = Mod1Mask) and (Ev.keycode = FKcF11) then
-  begin
-    if FFocused <> nil then SetFullscreen(FFocused, not FFocused.Fullscreen);
-  end
-  else if (St = Mod4Mask) and (Ev.keycode = FKcReturn) then
-  begin
-    if FFocused <> nil then ToggleMaximize(FFocused);
-  end
-  else if (St = (ControlMask or Mod1Mask)) and (Ev.keycode = FKcLeft) then SwitchDesktop(FCurDesk - 1, Ev.time)
-  else if (St = (ControlMask or Mod1Mask)) and (Ev.keycode = FKcRight) then SwitchDesktop(FCurDesk + 1, Ev.time)
-  else if (St = (ControlMask or Mod1Mask or ShiftMask)) and ((Ev.keycode = FKcLeft) or (Ev.keycode = FKcRight)) then
-  begin
-    { move the focused window one desktop over and go with it }
-    if (FFocused <> nil) and (FFocused.Desktop >= 0) then
-    begin
-      if Ev.keycode = FKcLeft then K := FFocused.Desktop - 1 else K := FFocused.Desktop + 1;
-      if (K >= 0) and (K < FNumDesk) then
-      begin
-        C := FFocused;
-        C.Desktop := K;
-        SetDesktopProp(C);
-        UpdateNetState(C);
-        SwitchDesktop(K, Ev.time);
-        FocusClient(C, Ev.time);
-      end;
-    end;
-  end;
+  if I >= 0 then RunAction(FCfg.Keys[I], Ev.time);
 end;
 
 procedure TWM.OnKeyRelease(var Ev: TXKeyEvent);
+var
+  Rw, Cw: TWindow;
+  Rx, Ry, Wx, Wy: cint;
+  Mask: cuint;
 begin
-  if FCycling and ((Ev.keycode = FKcAltL) or (Ev.keycode = FKcAltR)) then EndCycle;
+  if not FCycling then Exit;
+  if XQueryPointer(FDpy, FRoot, @Rw, @Cw, @Rx, @Ry, @Wx, @Wy, @Mask) and ((Mask and FCycleMods) = 0) then
+    EndCycle;
 end;
 
 { ---- dragging ---- }
@@ -1787,6 +1823,7 @@ end;
 
 procedure TWM.Run;
 var
+  NewCfg: TConfig;
   Ev, Nx: TXEvent;
   Fds: TFDSet;
   Fd: cint;
@@ -1804,6 +1841,15 @@ begin
       if Ev._type = MotionNotify then
         while XCheckTypedEvent(FDpy, MotionNotify, @Nx) do Ev := Nx;
       HandleEvent(Ev);
+    end;
+    if FReload then
+    begin
+      FReload := False;
+      NewCfg := LoadConfig(FCfg.Path);
+      FCfg.Keys := NewCfg.Keys;
+      GrabKeys;
+      Log(Format('reloaded key bindings from %s (%d bindings, %d warnings)',
+        [FCfg.Path, Length(FCfg.Keys), Length(NewCfg.Warnings)]));
     end;
     XFlush(FDpy);
     fpFD_ZERO(Fds);

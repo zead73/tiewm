@@ -1,0 +1,60 @@
+# tiewm configuration.  Copy to ~/.config/tiewm/tiewm.conf and edit:
+#   mkdir -p ~/.config/tiewm && cp tiewm.conf.example ~/.config/tiewm/tiewm.conf
+#
+# Check a file without starting anything:   tiewm --check-config [FILE]
+# Keys can be reloaded in a running tiewm:  pkill -HUP -x tiewm   (everything else needs a restart/re-login)
+# A bad line is only a warning: tiewm keeps the default for it and still starts.
+# Lines starting with # or ; are comments.  The values shown are the defaults.
+
+[general]
+# Any xfwm4 theme folder name from /usr/share/themes/<name>/xfwm4 or ~/.themes/<name>/xfwm4
+# (installed here: Daloa, Default, Default-hdpi, Default-xhdpi, Kokodi, Moheli, Nordic).
+# An unknown name falls back to Daloa.
+#theme = Daloa
+
+# Pango-style font name: family, optional Bold/Italic/Light, then the size in points.
+#title_font = Sans Bold 11
+
+# Titlebar buttons.  O menu, T stick, S shade, H hide (minimize), M maximize, C close.
+# Letters before "|" go on the left, after it on the right.  Only M, H and C do something yet.
+#button_layout = O|SHMC
+
+# left, center or right
+#title_align = left
+
+# Number of workspaces, 1..20.
+#desktops = 4
+
+# Title font rendering: greyscale antialiasing and hinting (0 none, 1 slight, 2 medium, 3 full, -1 = fontconfig's choice).
+#font_greyscale = true
+#font_hinting = 3
+
+[colors]
+# xfwm4 themes take their colours from the GTK theme; these are the base colours tiewm uses
+# (measured from xfwm4 with Adwaita-dark).  Highlights and shadows are derived from them.
+#active_color_1 = #14529E
+#inactive_color_1 = #323232
+#active_color_2 = #353535
+#inactive_color_2 = #353535
+#inactive_text_color = #919190
+
+[keys]
+# action = Combo[, Combo ...]     "none" disables an action.
+# Listing an action replaces ALL of its default bindings; actions you do not list keep theirs.
+# Combos: modifiers Ctrl, Alt, Shift, Super (also Control, Mod1, Mod4, Meta) joined by +, then an
+# X keysym name: Tab, Return, Left, Right, F4, a, 2, ...  Caps Lock and Num Lock never matter.
+#close = Alt+F4
+#cycle = Alt+Tab
+#cycle_back = Alt+Shift+Tab
+#maximize = Super+Return
+#iconify = Alt+F9
+#fullscreen = Alt+F11
+#desktop_left = Ctrl+Alt+Left
+#desktop_right = Ctrl+Alt+Right
+#move_left = Ctrl+Alt+Shift+Left      # move the focused window one desktop over and follow it
+#move_right = Ctrl+Alt+Shift+Right
+#
+# Direct desktop keys (none by default; Ctrl+F1..F12 are already taken by lxqt-globalkeyshortcuts):
+#goto_desktop_1 = Super+1
+#goto_desktop_2 = Super+2
+#move_to_desktop_1 = Super+Shift+1
