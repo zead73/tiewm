@@ -74,7 +74,7 @@ transient/centred/focused, Vivaldi F11 fullscreen on and off. Found and fixed: l
 unless every window has `_NET_WM_DESKTOP`.
 
 Deliberately not done: shade, other key bindings (no config file for keys yet), `--replace`,
-multi-monitor, window menu, `_NET_WM_STATE_ABOVE/BELOW/STICKY`, modal dialogs, adopting windows that are
+multi-monitor, window menu, `_NET_WM_STATE_ABOVE`, modal dialogs, adopting windows that are
 iconic when the WM starts, button prelight/pressed images, app icon in the menu button, config file, session
 management, gravity/transient-for handling, `_NET_WM_MOVERESIZE`. Not yet run against the real LXQt
 session or lxqt-panel.
