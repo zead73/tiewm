@@ -129,6 +129,10 @@ Text rules measured from xfwm4 (Sans Bold 11, Xvfb 96 dpi):
 Build tools: `fpc -Mobjfpc -Sh -O1 -Fu.. themetest.pas` (from `tools/`). `framecheck` and `shapewin` need
 `DISPLAY` pointing at an X server (Xvfb is fine).
 
+## License
+
+The source code is MIT licensed, see [LICENSE](LICENSE). The exception is the Daloa renders described below.
+
 ## Third-party material
 
 The images `ref/daloa-full.png`, `ref/frame-active-310x224.png`, `ref/frame-inactive-410x324.png` and
