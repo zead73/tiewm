@@ -33,7 +33,7 @@ Run it ONLY on a display you mean to manage: `DISPLAY=:99 ./tiewm` (it refuses t
 the root; `TIEWM_THEME`, `TIEWM_FONT`, `TIEWM_DEBUG=1` are the only settings so far). SIGTERM/SIGINT hand all
 windows back to the root cleanly.
 
-Works (30 scenario checks, `tools/wmtest.sh`, scratch Xvfb on :99 only): manage/adopt/unmanage, centred
+Works (62 scenario checks, `tools/wmtest.sh`, scratch Xvfb on :99 only): manage/adopt/unmanage, centred
 placement (honours USPosition), themed frames with shape, click-to-focus with click replay to the app,
 raise on click, active/inactive repaint, title updates, titlebar drag and Alt+drag (also with Num/Caps Lock),
 Alt+right-drag resize, edge/corner resize with min-size and size-increment hints, close button
@@ -42,8 +42,16 @@ the work area, save-set so clients survive a WM crash, EWMH: `_NET_SUPPORTED`, `
 `_NET_CLIENT_LIST(_STACKING)`, `_NET_ACTIVE_WINDOW` (+ client message), `_NET_CLOSE_WINDOW`,
 `_NET_FRAME_EXTENTS`, `_NET_WORKAREA`, 1 desktop.
 
-Deliberately not done: workspaces, iconify/shade/stick, key bindings, Alt+Tab, `--replace`, multi-monitor,
-fullscreen, window menu, button prelight/pressed images, app icon in the menu button, config file, session
+Added for the live-trial plan: keys Alt+F4 (close), Alt+Tab / Alt+Shift+Tab (MRU cycling while Alt is held,
+keyboard grabbed, includes iconic windows), Super+Return (maximize), Alt+F9 (iconify), Alt+F11 (fullscreen),
+all with Caps/Num Lock; fullscreen (`_NET_WM_STATE_FULLSCREEN`, no decorations, extents 0, raised above docks);
+iconify (H button, Alt+F9, `WM_CHANGE_STATE`, `_NET_WM_STATE_HIDDEN`, WM_STATE Iconic, restored by
+`_NET_ACTIVE_WINDOW` / Alt+Tab / the client mapping itself again); `WM_TRANSIENT_FOR` dialogs (centred over the
+parent, kept above it when it is raised, iconified with it, focus returns to the parent when the dialog closes).
+
+Deliberately not done: workspaces, shade/stick, other key bindings (no config file for keys yet), `--replace`,
+multi-monitor, window menu, `_NET_WM_STATE_ABOVE/BELOW/STICKY`, modal dialogs, adopting windows that are
+iconic when the WM starts, button prelight/pressed images, app icon in the menu button, config file, session
 management, gravity/transient-for handling, `_NET_WM_MOVERESIZE`. Not yet run against the real LXQt
 session or lxqt-panel.
 

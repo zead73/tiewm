@@ -12,7 +12,7 @@ unit twwm;
 interface
 
 uses
-  ctypes, SysUtils, Classes, BaseUnix, x, xlib, xutil, xatom, cursorfont,
+  ctypes, SysUtils, Classes, BaseUnix, x, xlib, xutil, xatom, cursorfont, keysym,
   twimage, twtheme, twxft, twxdraw, twxshape;
 
 type
@@ -23,8 +23,9 @@ type
     IgnoreUnmap: Integer;         { unmaps we caused ourselves }
     InputHint, HasDelete, HasTakeFocus: Boolean;
     MinW, MinH, MaxW, MaxH, IncW, IncH, BaseW, BaseH: Integer;   { client sizes }
-    Maximized: Boolean;
-    SaveX, SaveY, SaveW, SaveH: Integer;
+    Maximized, Fullscreen, Iconic: Boolean;
+    Transient: TWindow;           { WM_TRANSIENT_FOR, 0 if none }
+    SaveX, SaveY, SaveW, SaveH: Integer;   { geometry to return to from maximize/fullscreen }
     PaintedActive: Boolean;
     PaintedW, PaintedH: Integer;
     PaintedName: string;
@@ -35,6 +36,10 @@ type
   TDock = record
     Win: TWindow;
     Left, Right, Top, Bottom: Integer;
+  end;
+
+  TExt = record
+    L, R, T, B: Integer;
   end;
 
   TDragKind = (dgNone, dgMove, dgResize);
@@ -62,12 +67,17 @@ type
     aSupported, aNetWmName, aActive, aClientList, aClientListStk, aFrameExtents: TAtom;
     aNetWmState, aMaxVert, aMaxHorz, aCloseWindow, aWindowType: TAtom;
     aTypeDock, aTypeDesktop, aTypeMenu, aTypeDropdown, aTypePopup, aTypeTooltip, aTypeNotification, aTypeCombo, aTypeDnd: TAtom;
+    aHidden, aFullscreen: TAtom;
     aStrut, aStrutPartial, aNumDesktops, aCurDesktop, aWorkarea, aDeskGeom, aDeskViewport, aSupportingCheck: TAtom;
     { drag state }
     FDrag: TDragKind;
     FDragClient: TClient;
     FDragHit: THitKind;
     FDragPX, FDragPY, FDragX, FDragY, FDragW, FDragH: Integer;
+    FKcF4, FKcTab, FKcReturn, FKcF9, FKcF11, FKcAltL, FKcAltR: cuint;
+    FCycling: Boolean;
+    FCycleList: TList;
+    FCycleIdx: Integer;
     FPressClient: TClient;
     FPressLetter: Char;
     FLastClickTime: culong;
@@ -96,12 +106,26 @@ type
     procedure Repaint(C: TClient; Force: Boolean);
     procedure SetFrameGeometry(C: TClient; NX, NY, NW, NH: Integer);
     procedure SendConfigure(C: TClient);
+    function Ext(C: TClient): TExt;
     procedure ClientSizeOf(C: TClient; out CW, CH: Integer);
     procedure ConstrainClient(C: TClient; var CW, CH: Integer);
     procedure FocusClient(C: TClient; ATime: culong);
     procedure RaiseClient(C: TClient);
     procedure CloseClient(C: TClient);
     procedure ToggleMaximize(C: TClient);
+    procedure SetFullscreen(C: TClient; On: Boolean);
+    procedure Iconify(C: TClient);
+    procedure Deiconify(C: TClient);
+    procedure FocusNext(Exclude: TClient);
+    procedure Activate(C: TClient; ATime: culong);
+    procedure RaiseTransients(C: TClient; Depth: Integer);
+    procedure SetFrameExtentsProp(C: TClient);
+    procedure GrabKeys;
+    procedure OnKeyPress(var Ev: TXKeyEvent);
+    procedure OnKeyRelease(var Ev: TXKeyEvent);
+    procedure StartCycle(Dir: Integer; ATime: culong);
+    procedure StepCycle(Dir: Integer);
+    procedure EndCycle;
     procedure UpdateClientList;
     procedure SetWmState(C: TClient; State: Integer);
     procedure UpdateNetState(C: TClient);
@@ -170,6 +194,7 @@ begin
   FDebug := GetEnvironmentVariable('TIEWM_DEBUG') <> '';
   FClients := TList.Create;
   FMru := TList.Create;
+  FCycleList := TList.Create;
   FTheme := TXfwmTheme.Create;
   if not FTheme.Load(ThemeName, DefaultPalette) then
     raise Exception.Create('xfwm4 theme not found: ' + ThemeName);
@@ -185,6 +210,7 @@ begin
   FTheme.Free;
   FClients.Free;
   FMru.Free;
+  FCycleList.Free;
   inherited Destroy;
 end;
 
@@ -211,6 +237,7 @@ begin
   aTypePopup := A('_NET_WM_WINDOW_TYPE_POPUP_MENU'); aTypeTooltip := A('_NET_WM_WINDOW_TYPE_TOOLTIP');
   aTypeNotification := A('_NET_WM_WINDOW_TYPE_NOTIFICATION'); aTypeCombo := A('_NET_WM_WINDOW_TYPE_COMBO');
   aTypeDnd := A('_NET_WM_WINDOW_TYPE_DND');
+  aHidden := A('_NET_WM_STATE_HIDDEN'); aFullscreen := A('_NET_WM_STATE_FULLSCREEN');
   aStrut := A('_NET_WM_STRUT'); aStrutPartial := A('_NET_WM_STRUT_PARTIAL');
   aNumDesktops := A('_NET_NUMBER_OF_DESKTOPS'); aCurDesktop := A('_NET_CURRENT_DESKTOP');
   aWorkarea := A('_NET_WORKAREA'); aDeskGeom := A('_NET_DESKTOP_GEOMETRY');
@@ -241,6 +268,7 @@ begin
   FCursors[hkSE] := XCreateFontCursor(FDpy, XC_bottom_right_corner);
   XDefineCursor(FDpy, FRoot, FArrowCursor);
   SetupEwmh;
+  GrabKeys;
   Result := True;
 end;
 
@@ -404,7 +432,7 @@ procedure TWM.SetupEwmh;
 var
   Sup: array of culong;
   Name: string;
-  Atoms: array[0..13] of TAtom;
+  Atoms: array[0..15] of TAtom;
   I: Integer;
 begin
   FCheckWin := XCreateSimpleWindow(FDpy, FRoot, -100, -100, 1, 1, 0, 0, 0);
@@ -416,6 +444,7 @@ begin
   Atoms[4] := aFrameExtents; Atoms[5] := aNetWmState; Atoms[6] := aMaxVert; Atoms[7] := aMaxHorz;
   Atoms[8] := aCloseWindow; Atoms[9] := aWindowType; Atoms[10] := aSupportingCheck;
   Atoms[11] := aNumDesktops; Atoms[12] := aCurDesktop; Atoms[13] := aWorkarea;
+  Atoms[14] := aHidden; Atoms[15] := aFullscreen;
   SetLength(Sup, Length(Atoms));
   for I := 0 to High(Atoms) do Sup[I] := Atoms[I];
   SetCards(FRoot, aSupported, Sup);
@@ -470,14 +499,13 @@ end;
 
 procedure TWM.UpdateNetState(C: TClient);
 var
-  V: array[0..1] of TAtom;
+  V: array[0..3] of TAtom;
   N: Integer;
 begin
   N := 0;
-  if C.Maximized then
-  begin
-    V[0] := aMaxVert; V[1] := aMaxHorz; N := 2;
-  end;
+  if C.Maximized then begin V[N] := aMaxVert; Inc(N); V[N] := aMaxHorz; Inc(N); end;
+  if C.Fullscreen then begin V[N] := aFullscreen; Inc(N); end;
+  if C.Iconic then begin V[N] := aHidden; Inc(N); end;
   if N = 0 then
     XDeleteProperty(FDpy, C.Win, aNetWmState)
   else
@@ -491,6 +519,7 @@ var
   Wm: PXWMHints;
   Prots: PAtom;
   NProt, I: cint;
+  TWin: TWindow;
 begin
   C.MinW := 1; C.MinH := 1; C.MaxW := 65535; C.MaxH := 65535;
   C.IncW := 1; C.IncH := 1; C.BaseW := 0; C.BaseH := 0;
@@ -514,6 +543,10 @@ begin
     if (Wm^.flags and InputHint) <> 0 then C.InputHint := Wm^.input <> 0;
     XFree(Wm);
   end;
+  C.Transient := 0;
+  TWin := 0;
+  if (XGetTransientForHint(FDpy, C.Win, @TWin) <> 0) and (TWin <> FRoot) and (TWin <> C.Win) then
+    C.Transient := TWin;
   C.HasDelete := False;
   C.HasTakeFocus := False;
   Prots := nil;
@@ -531,13 +564,36 @@ end;
 
 { ---- geometry ---- }
 
-procedure TWM.ClientSizeOf(C: TClient; out CW, CH: Integer);
+function TWM.Ext(C: TClient): TExt;
 var
   M: TThemeMetrics;
 begin
-  M := FTheme.Metrics;
-  CW := C.W - M.LeftW - M.RightW;
-  CH := C.H - M.TitleH - M.BottomH;
+  if C.Fullscreen then
+  begin
+    Result.L := 0; Result.R := 0; Result.T := 0; Result.B := 0;
+  end
+  else
+  begin
+    M := FTheme.Metrics;
+    Result.L := M.LeftW; Result.R := M.RightW; Result.T := M.TitleH; Result.B := M.BottomH;
+  end;
+end;
+
+procedure TWM.SetFrameExtentsProp(C: TClient);
+var
+  E: TExt;
+begin
+  E := Ext(C);
+  SetCards(C.Win, aFrameExtents, [culong(E.L), culong(E.R), culong(E.T), culong(E.B)]);
+end;
+
+procedure TWM.ClientSizeOf(C: TClient; out CW, CH: Integer);
+var
+  E: TExt;
+begin
+  E := Ext(C);
+  CW := C.W - E.L - E.R;
+  CH := C.H - E.T - E.B;
   if CW < 1 then CW := 1;
   if CH < 1 then CH := 1;
 end;
@@ -557,17 +613,17 @@ end;
 procedure TWM.SendConfigure(C: TClient);
 var
   Ev: TXEvent;
-  M: TThemeMetrics;
+  E: TExt;
   CW, CH: Integer;
 begin
-  M := FTheme.Metrics;
+  E := Ext(C);
   ClientSizeOf(C, CW, CH);
   FillChar(Ev, SizeOf(Ev), 0);
   Ev.xconfigure._type := ConfigureNotify;
   Ev.xconfigure.event := C.Win;
   Ev.xconfigure.window := C.Win;
-  Ev.xconfigure.x := C.X + M.LeftW;
-  Ev.xconfigure.y := C.Y + M.TitleH;
+  Ev.xconfigure.x := C.X + E.L;
+  Ev.xconfigure.y := C.Y + E.T;
   Ev.xconfigure.width := CW;
   Ev.xconfigure.height := CH;
   Ev.xconfigure.border_width := 0;
@@ -582,6 +638,7 @@ var
   Pm, Mask: TPixmap;
   TX, BY: Integer;
 begin
+  if C.Fullscreen then Exit;
   Act := C = FFocused;
   if (not Force) and C.Painted and (C.PaintedActive = Act) and (C.PaintedW = C.W) and
      (C.PaintedH = C.H) and (C.PaintedName = C.Name) then Exit;
@@ -623,6 +680,7 @@ end;
 procedure TWM.Place(C: TClient; HasPos: Boolean; CX, CY: Integer);
 var
   AX, AY, AW, AH: Integer;
+  P: TClient;
   M: TThemeMetrics;
 begin
   M := FTheme.Metrics;
@@ -636,7 +694,15 @@ begin
   begin
     C.X := AX + (AW - C.W) div 2;
     C.Y := AY + (AH - C.H) div 2;
+    P := FindClient(C.Transient);
+    if P <> nil then
+    begin
+      C.X := P.X + (P.W - C.W) div 2;
+      C.Y := P.Y + (P.H - C.H) div 2;
+    end;
   end;
+  if C.X + C.W > AX + AW then C.X := AX + AW - C.W;
+  if C.Y + C.H > AY + AH then C.Y := AY + AH - C.H;
   if C.X < AX then C.X := AX;
   if C.Y < AY then C.Y := AY;
 end;
@@ -725,17 +791,23 @@ end;
 
 procedure TWM.Unmanage(C: TClient; Destroyed: Boolean);
 var
-  M: TThemeMetrics;
-  I: Integer;
+  E: TExt;
+  Par: TClient;
 begin
-  M := FTheme.Metrics;
+  E := Ext(C);
+  Par := FindClient(C.Transient);
+  if FCycleList.IndexOf(C) >= 0 then
+  begin
+    FCycleList.Remove(C);
+    if FCycling and (FCycleList.Count < 2) then EndCycle;
+  end;
   Log(Format('unmanage 0x%x destroyed=%d', [C.Win, Ord(Destroyed)]));
   if FDrag <> dgNone then if FDragClient = C then EndDrag;
   if FPressClient = C then FPressClient := nil;
   if not Destroyed then
   begin
     XUnmapWindow(FDpy, C.Frame);
-    XReparentWindow(FDpy, C.Win, FRoot, C.X + M.LeftW, C.Y + M.TitleH);
+    XReparentWindow(FDpy, C.Win, FRoot, C.X + E.L, C.Y + E.T);
     XRemoveFromSaveSet(FDpy, C.Win);
     SetWmState(C, WithdrawnState);
     XDeleteProperty(FDpy, C.Win, aFrameExtents);
@@ -747,13 +819,8 @@ begin
   if FFocused = C then
   begin
     FFocused := nil;
-    I := FMru.Count - 1;
-    if I >= 0 then FocusClient(TClient(FMru[I]), CurrentTime)
-    else
-    begin
-      XSetInputFocus(FDpy, FRoot, RevertToPointerRoot, CurrentTime);
-      XDeleteProperty(FDpy, FRoot, aActive);
-    end;
+    if (Par <> nil) and (Par <> C) and (not Par.Iconic) then FocusClient(Par, CurrentTime)
+    else FocusNext(nil);
   end;
   C.Free;
   UpdateClientList;
@@ -815,6 +882,24 @@ end;
 procedure TWM.RaiseClient(C: TClient);
 begin
   XRaiseWindow(FDpy, C.Frame);
+  RaiseTransients(C, 0);
+end;
+
+procedure TWM.RaiseTransients(C: TClient; Depth: Integer);
+var
+  I: Integer;
+  T: TClient;
+begin
+  if Depth > 4 then Exit;
+  for I := 0 to FClients.Count - 1 do
+  begin
+    T := TClient(FClients[I]);
+    if (T <> C) and (T.Transient = C.Win) and (not T.Iconic) then
+    begin
+      XRaiseWindow(FDpy, T.Frame);
+      RaiseTransients(T, Depth + 1);
+    end;
+  end;
 end;
 
 procedure TWM.CloseClient(C: TClient);
@@ -840,6 +925,7 @@ procedure TWM.ToggleMaximize(C: TClient);
 var
   AX, AY, AW, AH: Integer;
 begin
+  if C.Fullscreen or C.Iconic then Exit;
   if C.Maximized then
   begin
     C.Maximized := False;
@@ -855,13 +941,243 @@ begin
   UpdateNetState(C);
 end;
 
+{ ---- iconify / fullscreen ---- }
+
+procedure TWM.Activate(C: TClient; ATime: culong);
+begin
+  if C.Iconic then Deiconify(C);
+  FocusClient(C, ATime);
+  RaiseClient(C);
+end;
+
+procedure TWM.FocusNext(Exclude: TClient);
+var
+  I: Integer;
+  T, Old: TClient;
+begin
+  for I := FMru.Count - 1 downto 0 do
+  begin
+    T := TClient(FMru[I]);
+    if (T <> Exclude) and (not T.Iconic) then
+    begin
+      FocusClient(T, CurrentTime);
+      Exit;
+    end;
+  end;
+  Old := FFocused;
+  FFocused := nil;
+  if (Old <> nil) and (FClients.IndexOf(Old) >= 0) and (not Old.Iconic) then Repaint(Old, False);
+  XSetInputFocus(FDpy, FRoot, RevertToPointerRoot, CurrentTime);
+  XDeleteProperty(FDpy, FRoot, aActive);
+end;
+
+procedure TWM.Iconify(C: TClient);
+var
+  I: Integer;
+  T: TClient;
+  Atr: TXWindowAttributes;
+begin
+  if C.Iconic then Exit;
+  { transients go with their parent }
+  for I := 0 to FClients.Count - 1 do
+  begin
+    T := TClient(FClients[I]);
+    if (T <> C) and (T.Transient = C.Win) then Iconify(T);
+  end;
+  C.Iconic := True;
+  if (XGetWindowAttributes(FDpy, C.Win, @Atr) <> 0) and (Atr.map_state <> IsUnmapped) then
+  begin
+    Inc(C.IgnoreUnmap);
+    XUnmapWindow(FDpy, C.Win);
+  end;
+  XUnmapWindow(FDpy, C.Frame);
+  SetWmState(C, IconicState);
+  UpdateNetState(C);
+  if FDrag <> dgNone then if FDragClient = C then EndDrag;
+  if FFocused = C then FocusNext(C);
+end;
+
+procedure TWM.Deiconify(C: TClient);
+var
+  I: Integer;
+  T: TClient;
+begin
+  if not C.Iconic then Exit;
+  C.Iconic := False;
+  XMapWindow(FDpy, C.Win);
+  XMapWindow(FDpy, C.Frame);
+  SetWmState(C, NormalState);
+  UpdateNetState(C);
+  for I := 0 to FClients.Count - 1 do
+  begin
+    T := TClient(FClients[I]);
+    if (T <> C) and (T.Transient = C.Win) then Deiconify(T);
+  end;
+end;
+
+procedure TWM.SetFullscreen(C: TClient; On: Boolean);
+var
+  M: TThemeMetrics;
+  AX, AY, AW, AH, NX, NY, NW, NH, CW, CH: Integer;
+begin
+  if C.Fullscreen = On then Exit;
+  M := FTheme.Metrics;
+  if On then
+  begin
+    if C.Iconic then Deiconify(C);
+    if not C.Maximized then
+    begin
+      C.SaveX := C.X; C.SaveY := C.Y; C.SaveW := C.W; C.SaveH := C.H;
+    end;
+    C.Fullscreen := True;
+    C.X := 0; C.Y := 0; C.W := FScrW; C.H := FScrH;
+    XMoveResizeWindow(FDpy, C.Frame, 0, 0, FScrW, FScrH);
+    XMoveResizeWindow(FDpy, C.Win, 0, 0, FScrW, FScrH);
+    XShapeCombineMask(FDpy, C.Frame, ShapeBounding, 0, 0, None, ShapeSet);   { no shape: plain rectangle }
+    C.Painted := False;
+    RaiseClient(C);
+  end
+  else
+  begin
+    C.Fullscreen := False;
+    if C.Maximized then
+    begin
+      WorkArea(AX, AY, AW, AH);
+      NX := AX; NY := AY; NW := AW; NH := AH;
+    end
+    else
+    begin
+      NX := C.SaveX; NY := C.SaveY; NW := C.SaveW; NH := C.SaveH;
+    end;
+    C.X := NX; C.Y := NY; C.W := NW; C.H := NH;
+    ClientSizeOf(C, CW, CH);
+    XMoveResizeWindow(FDpy, C.Frame, NX, NY, NW, NH);
+    XMoveResizeWindow(FDpy, C.Win, M.LeftW, M.TitleH, CW, CH);
+    Repaint(C, True);
+  end;
+  SetFrameExtentsProp(C);
+  SendConfigure(C);
+  UpdateNetState(C);
+end;
+
+{ ---- keyboard: Alt+F4, Alt+Tab cycling, Super+Return, Alt+F9, Alt+F11 ---- }
+
+procedure TWM.GrabKeys;
+const
+  Locks: array[0..3] of cuint = (0, LockMask, Mod2Mask, LockMask or Mod2Mask);
+
+  procedure G(Ks: cuint; Mods: cuint);
+  var
+    Kc: cuint;
+    K: Integer;
+  begin
+    Kc := XKeysymToKeycode(FDpy, TKeySym(Ks));
+    if Kc = 0 then Exit;
+    for K := 0 to High(Locks) do
+      XGrabKey(FDpy, Kc, Mods or Locks[K], FRoot, 0, GrabModeAsync, GrabModeAsync);
+  end;
+
+begin
+  FKcF4 := XKeysymToKeycode(FDpy, TKeySym(XK_F4));
+  FKcTab := XKeysymToKeycode(FDpy, TKeySym(XK_Tab));
+  FKcReturn := XKeysymToKeycode(FDpy, TKeySym(XK_Return));
+  FKcF9 := XKeysymToKeycode(FDpy, TKeySym(XK_F9));
+  FKcF11 := XKeysymToKeycode(FDpy, TKeySym(XK_F11));
+  FKcAltL := XKeysymToKeycode(FDpy, TKeySym(XK_Alt_L));
+  FKcAltR := XKeysymToKeycode(FDpy, TKeySym(XK_Alt_R));
+  G(XK_F4, Mod1Mask);
+  G(XK_Tab, Mod1Mask);
+  G(XK_Tab, Mod1Mask or ShiftMask);
+  G(XK_F9, Mod1Mask);
+  G(XK_F11, Mod1Mask);
+  G(XK_Return, Mod4Mask);
+end;
+
+procedure TWM.StartCycle(Dir: Integer; ATime: culong);
+var
+  I: Integer;
+  Rw, Cw: TWindow;
+  Rx, Ry, Wx, Wy: cint;
+  Mask: cuint;
+begin
+  FCycleList.Clear;
+  for I := FMru.Count - 1 downto 0 do FCycleList.Add(FMru[I]);
+  if FCycleList.Count < 2 then begin FCycleList.Clear; Exit; end;
+  FCycleIdx := 0;
+  { while Alt stays down we own the keyboard, so Tab repeats and the Alt release reach us }
+  if XGrabKeyboard(FDpy, FRoot, 0, GrabModeAsync, GrabModeAsync, ATime) = GrabSuccess then
+    FCycling := True;
+  StepCycle(Dir);
+  if FCycling then
+  begin
+    { Alt may already be up if the key press was very short }
+    if XQueryPointer(FDpy, FRoot, @Rw, @Cw, @Rx, @Ry, @Wx, @Wy, @Mask) and ((Mask and Mod1Mask) = 0) then
+      EndCycle;
+  end
+  else
+    FCycleList.Clear;
+end;
+
+procedure TWM.StepCycle(Dir: Integer);
+var
+  N: Integer;
+begin
+  N := FCycleList.Count;
+  if N < 2 then Exit;
+  FCycleIdx := ((FCycleIdx + Dir) mod N + N) mod N;
+  Activate(TClient(FCycleList[FCycleIdx]), CurrentTime);
+end;
+
+procedure TWM.EndCycle;
+begin
+  if FCycling then XUngrabKeyboard(FDpy, CurrentTime);
+  FCycling := False;
+  FCycleList.Clear;
+end;
+
+procedure TWM.OnKeyPress(var Ev: TXKeyEvent);
+var
+  St: cuint;
+begin
+  St := Ev.state and not CleanLocks;
+  if FCycling then
+  begin
+    if Ev.keycode = FKcTab then
+      if (Ev.state and ShiftMask) <> 0 then StepCycle(-1) else StepCycle(1);
+    Exit;
+  end;
+  if (St = Mod1Mask) and (Ev.keycode = FKcF4) then
+  begin
+    if FFocused <> nil then CloseClient(FFocused);
+  end
+  else if (St = Mod1Mask) and (Ev.keycode = FKcTab) then StartCycle(1, Ev.time)
+  else if (St = (Mod1Mask or ShiftMask)) and (Ev.keycode = FKcTab) then StartCycle(-1, Ev.time)
+  else if (St = Mod1Mask) and (Ev.keycode = FKcF9) then
+  begin
+    if FFocused <> nil then Iconify(FFocused);
+  end
+  else if (St = Mod1Mask) and (Ev.keycode = FKcF11) then
+  begin
+    if FFocused <> nil then SetFullscreen(FFocused, not FFocused.Fullscreen);
+  end
+  else if (St = Mod4Mask) and (Ev.keycode = FKcReturn) then
+  begin
+    if FFocused <> nil then ToggleMaximize(FFocused);
+  end;
+end;
+
+procedure TWM.OnKeyRelease(var Ev: TXKeyEvent);
+begin
+  if FCycling and ((Ev.keycode = FKcAltL) or (Ev.keycode = FKcAltR)) then EndCycle;
+end;
+
 { ---- dragging ---- }
 
 procedure TWM.BeginDrag(C: TClient; Kind: TDragKind; Hit: THitKind; XRoot, YRoot: Integer; ATime: culong);
 var
   Cur: TCursor;
 begin
-  if C.Maximized then Exit;
+  if C.Maximized or C.Fullscreen or C.Iconic then Exit;
   FDrag := Kind;
   FDragClient := C;
   FDragHit := Hit;
@@ -940,8 +1256,12 @@ begin
   C := FindClient(Ev.window);
   if C <> nil then
   begin
-    XMapWindow(FDpy, C.Win);
-    XMapWindow(FDpy, C.Frame);
+    if C.Iconic then Activate(C, CurrentTime)
+    else
+    begin
+      XMapWindow(FDpy, C.Win);
+      XMapWindow(FDpy, C.Frame);
+    end;
     Exit;
   end;
   Manage(Ev.window, False);
@@ -951,7 +1271,7 @@ procedure TWM.OnConfigureRequest(var Ev: TXConfigureRequestEvent);
 var
   C: TClient;
   Chg: TXWindowChanges;
-  M: TThemeMetrics;
+  E: TExt;
   CW, CH, NX, NY: Integer;
 begin
   C := FindClient(Ev.window);
@@ -963,16 +1283,16 @@ begin
     XConfigureWindow(FDpy, Ev.window, Ev.value_mask, @Chg);
     Exit;
   end;
-  M := FTheme.Metrics;
-  if C.Maximized then begin SendConfigure(C); Exit; end;
+  E := Ext(C);
+  if C.Maximized or C.Fullscreen then begin SendConfigure(C); Exit; end;
   ClientSizeOf(C, CW, CH);
   NX := C.X; NY := C.Y;
   if (Ev.value_mask and CWWidth) <> 0 then CW := Ev.width;
   if (Ev.value_mask and CWHeight) <> 0 then CH := Ev.height;
-  if (Ev.value_mask and CWX) <> 0 then NX := Ev.x - M.LeftW;
-  if (Ev.value_mask and CWY) <> 0 then NY := Ev.y - M.TitleH;
+  if (Ev.value_mask and CWX) <> 0 then NX := Ev.x - E.L;
+  if (Ev.value_mask and CWY) <> 0 then NY := Ev.y - E.T;
   ConstrainClient(C, CW, CH);
-  SetFrameGeometry(C, NX, NY, CW + M.LeftW + M.RightW, CH + M.TitleH + M.BottomH);
+  SetFrameGeometry(C, NX, NY, CW + E.L + E.R, CH + E.T + E.B);
   if ((Ev.value_mask and CWStackMode) <> 0) and (Ev.detail = Above) then RaiseClient(C);
 end;
 
@@ -1096,6 +1416,7 @@ begin
       case H.Letter of
         'C': CloseClient(C);
         'M': ToggleMaximize(C);
+        'H': Iconify(C);
       end;
   end;
 end;
@@ -1117,33 +1438,47 @@ procedure TWM.OnClientMessage(var Ev: TXClientMessageEvent);
 var
   C: TClient;
   Act: clong;
-  Want, Has: Boolean;
-  A1, A2: TAtom;
+  Want: Boolean;
+  K: Integer;
+  A: TAtom;
 begin
   C := FindClient(Ev.window);
   if C = nil then Exit;
   if Ev.message_type = aActive then
-  begin
-    FocusClient(C, CurrentTime);
-    RaiseClient(C);
-  end
+    Activate(C, CurrentTime)
   else if Ev.message_type = aCloseWindow then
     CloseClient(C)
+  else if Ev.message_type = aChangeState then
+  begin
+    if Ev.data.l[0] = IconicState then Iconify(C);
+  end
   else if Ev.message_type = aNetWmState then
   begin
     Act := Ev.data.l[0];
-    A1 := TAtom(Ev.data.l[1]);
-    A2 := TAtom(Ev.data.l[2]);
-    if (A1 = aMaxVert) or (A1 = aMaxHorz) or (A2 = aMaxVert) or (A2 = aMaxHorz) then
+    for K := 1 to 2 do
     begin
-      Has := C.Maximized;
-      case Act of
-        0: Want := False;
-        1: Want := True;
-      else
-        Want := not Has;
+      A := TAtom(Ev.data.l[K]);
+      if A = None then Continue;
+      if (A = aMaxVert) or (A = aMaxHorz) then
+      begin
+        case Act of
+          0: Want := False;
+          1: Want := True;
+        else
+          Want := not C.Maximized;
+        end;
+        if Want <> C.Maximized then ToggleMaximize(C);
+      end
+      else if A = aFullscreen then
+      begin
+        case Act of
+          0: Want := False;
+          1: Want := True;
+        else
+          Want := not C.Fullscreen;
+        end;
+        SetFullscreen(C, Want);
       end;
-      if Want <> Has then ToggleMaximize(C);
     end;
   end;
 end;
@@ -1167,7 +1502,8 @@ begin
     C.Name := ReadName(C.Win);
     Repaint(C, False);
   end
-  else if (Ev.atom = XA_WM_NORMAL_HINTS) or (Ev.atom = XA_WM_HINTS) or (Ev.atom = aProtocols) then
+  else if (Ev.atom = XA_WM_NORMAL_HINTS) or (Ev.atom = XA_WM_HINTS) or (Ev.atom = aProtocols) or
+          (Ev.atom = XA_WM_TRANSIENT_FOR) then
     ReadHints(C);
 end;
 
@@ -1178,6 +1514,8 @@ begin
     ConfigureRequest: OnConfigureRequest(Ev.xconfigurerequest);
     UnmapNotify: OnUnmap(Ev.xunmap);
     DestroyNotify: OnDestroy(Ev.xdestroywindow);
+    KeyPress: OnKeyPress(Ev.xkey);
+    KeyRelease: OnKeyRelease(Ev.xkey);
     ButtonPress: OnButtonPress(Ev.xbutton);
     ButtonRelease: OnButtonRelease(Ev.xbutton);
     MotionNotify: OnMotion(Ev.xmotion);
@@ -1219,16 +1557,17 @@ procedure TWM.Shutdown;
 var
   I: Integer;
   C: TClient;
-  M: TThemeMetrics;
+  E: TExt;
 begin
-  M := FTheme.Metrics;
   if FDrag <> dgNone then EndDrag;
+  if FCycling then EndCycle;
   { give every client back to the root so nothing is lost with the frames }
   for I := FClients.Count - 1 downto 0 do
   begin
     C := TClient(FClients[I]);
+    E := Ext(C);
     XUnmapWindow(FDpy, C.Frame);
-    XReparentWindow(FDpy, C.Win, FRoot, C.X + M.LeftW, C.Y + M.TitleH);
+    XReparentWindow(FDpy, C.Win, FRoot, C.X + E.L, C.Y + E.T);
     XRemoveFromSaveSet(FDpy, C.Win);
     XMapWindow(FDpy, C.Win);
     XDeleteProperty(FDpy, C.Win, aFrameExtents);

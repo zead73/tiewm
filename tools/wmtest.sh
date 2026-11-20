@@ -41,6 +41,15 @@ field() { echo "$1" | tr ' ' '\n' | sed -n "s/^$2=//p"; }
 active() { xprop -root _NET_ACTIVE_WINDOW | sed 's/.*# //;s/,.*//'; }
 hexnorm() { printf '0x%x' "$(printf '%d' "$1")"; }
 
+
+viewable() {  # client id -> 1/0 (map state of the client window inside its frame)
+  "$XG" | grep "^  win=$(printf '0x%X' "$(printf '%d' "$1")") " | sed -n 's/.*viewable=\([01]\).*/\1/p'
+}
+stackpos() {  # client id -> index of its frame among root children (bottom = 0)
+  "$XG" | awk -v id="$(printf '0x%X' "$(printf '%d' "$1")")" '/^win=/{n++} /^  win=/{ if ($1=="win="id) print n }'
+}
+wmstate() { xprop -id "$1" WM_STATE | sed -n 's/.*window state: *//p' | sed 's/[^A-Za-z].*//'; }
+
 start_xvfb
 pkill -x tiewm 2>/dev/null; stop_clients
 M=5; T=19   # Daloa: left/right/bottom border 5, title 19
@@ -169,6 +178,93 @@ start_wm
 sleep 0.5; "$XG" | grep -q "name=\"Survivor\""; check "a restarted WM adopts it again" $?
 stop_wm
 stop_clients
+echo "== 13. keyboard: Alt+F4 closes the focused window"
+start_wm
+stop_clients
+newwin f4 -t "Alt F4" -w 300 -h 200 -c 559955 -s 60 -p 400,300
+"$XDO" keydown Alt_L key F4 keyup Alt_L; sec 0.8
+grep -q WM_DELETE_WINDOW "$TMP/f4.log"; check "Alt+F4 sent WM_DELETE_WINDOW to the focused window" $?
+
+echo "== 14. keyboard: Super+Return toggles maximize"
+newwin sr -t "Super Return" -w 300 -h 200 -c 995599 -s 60 -p 400,300
+"$XDO" keydown Super_L key Return keyup Super_L; sec 0.8
+G=$(absgeom "$LAST_ID"); [ "$(field "$G" w)" -eq $((1280-2*M)) ]; check "Super+Return maximizes ($G)" $?
+"$XDO" keydown Super_L key Return keyup Super_L; sec 0.8
+G=$(absgeom "$LAST_ID"); [ "$(field "$G" w)" -eq 300 ]; check "Super+Return restores ($G)" $?
+stop_clients
+
+echo "== 15. keyboard: Alt+Tab cycles in most-recently-used order"
+newwin p -t "P" -w 200 -h 150 -c aa0000 -s 120 -p 100,100; P=$LAST_ID
+newwin q -t "Q" -w 200 -h 150 -c 00aa00 -s 120 -p 400,100; Q=$LAST_ID
+newwin r -t "R" -w 200 -h 150 -c 0000aa -s 120 -p 700,100; R=$LAST_ID
+[ "$(hexnorm "$(active)")" = "$(hexnorm "$R")" ]; check "last mapped window (R) is active" $?
+"$XDO" keydown Alt_L key Tab keyup Alt_L; sec 0.5
+[ "$(hexnorm "$(active)")" = "$(hexnorm "$Q")" ]; check "Alt+Tab: R -> Q" $?
+"$XDO" keydown Alt_L key Tab keyup Alt_L; sec 0.5
+[ "$(hexnorm "$(active)")" = "$(hexnorm "$R")" ]; check "Alt+Tab again swaps back: Q -> R" $?
+"$XDO" keydown Alt_L key Tab key Tab keyup Alt_L; sec 0.5
+[ "$(hexnorm "$(active)")" = "$(hexnorm "$P")" ]; check "Alt held, Tab twice reaches the third window (P)" $?
+"$XDO" keydown Alt_L keydown Shift_L key Tab keyup Shift_L keyup Alt_L; sec 0.5
+[ "$(hexnorm "$(active)")" = "$(hexnorm "$R")" ]; check "Alt+Shift+Tab goes backwards to the least recent (R)" $?
+"$XDO" key a; sec 0.3
+grep -q KeyPress "$TMP/r.log"; check "keyboard was released after cycling (plain key reaches the focused app)" $?
+stop_clients
+
+echo "== 16. fullscreen: wmctrl request and Alt+F11"
+newwin fs -t "Fullscreen" -w 300 -h 200 -c 227799 -s 90 -p 400,300; FS=$LAST_ID
+wmctrl -i -r "$FS" -b add,fullscreen; sec 0.8
+G=$(absgeom "$FS")
+[ "$(field "$G" x)" -eq 0 ] && [ "$(field "$G" y)" -eq 0 ] && [ "$(field "$G" w)" -eq 1280 ] && [ "$(field "$G" h)" -eq 800 ]; check "fullscreen covers the whole screen ($G)" $?
+xprop -id "$FS" _NET_FRAME_EXTENTS | grep -q "= 0, 0, 0, 0"; check "frame extents are zero while fullscreen" $?
+xprop -id "$FS" _NET_WM_STATE | grep -q FULLSCREEN; check "_NET_WM_STATE has FULLSCREEN" $?
+wmctrl -i -r "$FS" -b remove,fullscreen; sec 0.8
+G=$(absgeom "$FS"); [ "$(field "$G" x)" -eq 400 ] && [ "$(field "$G" w)" -eq 300 ]; check "leaving fullscreen restores geometry ($G)" $?
+xprop -id "$FS" _NET_FRAME_EXTENTS | grep -q "= $M, $M, $T, $M"; check "frame extents restored" $?
+"$XDO" keydown Alt_L key F11 keyup Alt_L; sec 0.8
+G=$(absgeom "$FS"); [ "$(field "$G" w)" -eq 1280 ]; check "Alt+F11 enters fullscreen ($G)" $?
+"$XDO" keydown Alt_L key F11 keyup Alt_L; sec 0.8
+G=$(absgeom "$FS"); [ "$(field "$G" w)" -eq 300 ]; check "Alt+F11 leaves fullscreen ($G)" $?
+stop_clients
+
+echo "== 17. iconify: H button, Alt+F9, WM_CHANGE_STATE, restore via _NET_ACTIVE_WINDOW and Alt+Tab"
+newwin base -t "Base" -w 200 -h 150 -c 444444 -s 120 -p 100,500; BASE=$LAST_ID
+newwin ic -t "Iconify me" -w 300 -h 200 -c 774477 -s 120 -p 500,300; IC=$LAST_ID
+G=$(absgeom "$IC"); RX=$(field "$G" x); RY=$(field "$G" y); RW=$(field "$G" w)
+"$XDO" move $((RX+RW-59)) $((RY-T+8)) click 1; sec 0.8
+[ "$(viewable "$IC")" = "0" ]; check "H button hides the window" $?
+[ "$(wmstate "$IC")" = "Iconic" ]; check "WM_STATE is Iconic" $?
+xprop -id "$IC" _NET_WM_STATE | grep -q HIDDEN; check "_NET_WM_STATE has HIDDEN" $?
+[ "$(hexnorm "$(active)")" = "$(hexnorm "$BASE")" ]; check "focus moved to the next window" $?
+grep -q UnmapNotify "$TMP/ic.log"; check "client saw the unmap (so it knows it is iconic)" $?
+wmctrl -i -a "$IC"; sec 0.8
+[ "$(viewable "$IC")" = "1" ] && [ "$(wmstate "$IC")" = "Normal" ]; check "_NET_ACTIVE_WINDOW restores it" $?
+[ "$(hexnorm "$(active)")" = "$(hexnorm "$IC")" ]; check "restored window is active" $?
+"$XDO" keydown Alt_L key F9 keyup Alt_L; sec 0.8
+[ "$(viewable "$IC")" = "0" ]; check "Alt+F9 hides the focused window" $?
+"$XDO" keydown Alt_L key Tab keyup Alt_L; sec 0.8   
+[ "$(viewable "$IC")" = "1" ] && [ "$(hexnorm "$(active)")" = "$(hexnorm "$IC")" ]; check "Alt+Tab reaches the iconic window, restores and focuses it" $?
+stop_clients
+newwin ic2 -t "Self iconify" -w 300 -h 200 -c 337733 -s 30 -p 500,300 -i 1; IC2=$LAST_ID
+sleep 1.6
+[ "$(viewable "$IC2")" = "0" ] && [ "$(wmstate "$IC2")" = "Iconic" ]; check "WM_CHANGE_STATE (XIconifyWindow from the app) iconifies" $?
+stop_clients
+
+echo "== 18. transient dialogs: centred on parent, stay above, focus returns on close"
+newwin par -t "Parent" -w 400 -h 300 -c 3a5f8a -s 120 -p 300,200; PAR=$LAST_ID
+newwin dlg -t "Dialog" -w 200 -h 100 -c e0c050 -s 120 -P "$PAR"; DLG=$LAST_ID
+G=$(absgeom "$DLG"); DX=$(field "$G" x); DY=$(field "$G" y)
+[ "$DX" -ge 399 ] && [ "$DX" -le 401 ] && [ "$DY" -ge 299 ] && [ "$DY" -le 301 ]; check "dialog is centred over its parent (client at $DX,$DY, expected 400,300)" $?
+[ "$(hexnorm "$(active)")" = "$(hexnorm "$DLG")" ]; check "dialog gets focus" $?
+"$XDO" move 310 240 click 1; sec 0.5      # click the parent, away from the dialog
+[ "$(hexnorm "$(active)")" = "$(hexnorm "$PAR")" ]; check "clicking the parent focuses it" $?
+[ "$(stackpos "$DLG")" -gt "$(stackpos "$PAR")" ]; check "dialog is still stacked above its raised parent (dlg=$(stackpos "$DLG") par=$(stackpos "$PAR"))" $?
+"$XDO" move 500 360 click 1; sec 0.4       # focus the dialog again
+"$XDO" keydown Alt_L key F4 keyup Alt_L; sec 0.8
+grep -q WM_DELETE_WINDOW "$TMP/dlg.log"; check "Alt+F4 closed the dialog" $?
+[ "$(hexnorm "$(active)")" = "$(hexnorm "$PAR")" ]; check "focus returns to the parent after the dialog closes" $?
+stop_clients
+stop_wm
+
 echo
 echo "passed $PASS, failed $FAIL"
 [ "$FAIL" -eq 0 ]

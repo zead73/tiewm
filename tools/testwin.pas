@@ -5,6 +5,8 @@ program testwin;
     testwin [-t title] [-w width] [-h height] [-c rrggbb] [-s seconds]
             [-m minw,minh] [-p x,y]   program-specified position (USPosition)
             [-T newtitle,afterseconds]  change the title later
+            [-P 0xID]                 mark as transient for that window
+            [-i seconds]              iconify itself (XIconifyWindow) after N seconds
             [-n]                      ignore WM_DELETE_WINDOW (do not advertise it)
   Defaults: "testwin" 300x200 ff00ff, runs 30 s. Exits 0 on WM_DELETE_WINDOW. }
 
@@ -18,7 +20,9 @@ var
   Win: TWindow;
   Ev: TXEvent;
   Title, NewTitle: string;
-  W, H, Secs, MinW, MinH, PosX, PosY, ChangeAfter: Integer;
+  W, H, Secs, MinW, MinH, PosX, PosY, ChangeAfter, IconifyAfter: Integer;
+  ParentId: QWord;
+  Iconified: Boolean;
   Col: LongWord;
   HavePos, NoDelete: Boolean;
   Hints: TXSizeHints;
@@ -38,6 +42,7 @@ end;
 begin
   Title := 'testwin'; W := 300; H := 200; Col := $FF00FF; Secs := 30;
   MinW := 0; MinH := 0; HavePos := False; NoDelete := False; NewTitle := ''; ChangeAfter := 0;
+  IconifyAfter := -1; ParentId := 0; Iconified := False;
   I := 1;
   while I <= ParamCount do
   begin
@@ -60,6 +65,8 @@ begin
         P := Pos(',', S); PosX := StrToInt(Copy(S, 1, P - 1)); PosY := StrToInt(Copy(S, P + 1, 99));
         HavePos := True;
       end
+      else if Opt = '-P' then ParentId := StrToQWord(S)
+      else if Opt = '-i' then IconifyAfter := StrToInt(S)
       else if Opt = '-T' then
       begin
         P := Pos(',', S); NewTitle := Copy(S, 1, P - 1); ChangeAfter := StrToInt(Copy(S, P + 1, 99));
@@ -84,6 +91,7 @@ begin
   WmDelete := XInternAtom(Dpy, 'WM_DELETE_WINDOW', 0);
   WmProtocols := XInternAtom(Dpy, 'WM_PROTOCOLS', 0);
   if not NoDelete then XSetWMProtocols(Dpy, Win, @WmDelete, 1);
+  if ParentId <> 0 then XSetTransientForHint(Dpy, Win, ParentId);
   XSelectInput(Dpy, Win, StructureNotifyMask or ButtonPressMask or FocusChangeMask or ExposureMask or KeyPressMask);
   XMapWindow(Dpy, Win);
   XFlush(Dpy);
@@ -101,6 +109,13 @@ begin
       Changed := True;
       Say('title changed to ' + NewTitle);
     end;
+    if (IconifyAfter >= 0) and (not Iconified) and (Now_ - T0 >= IconifyAfter) then
+    begin
+      XIconifyWindow(Dpy, Win, DefaultScreen(Dpy));
+      XFlush(Dpy);
+      Iconified := True;
+      Say('iconify requested');
+    end;
     while XPending(Dpy) > 0 do
     begin
       XNextEvent(Dpy, @Ev);
@@ -111,6 +126,8 @@ begin
              Ord(Ev.xconfigure.send_event <> 0)]));
         ButtonPress:
           Say(Format('ButtonPress x=%d y=%d button=%d', [Ev.xbutton.x, Ev.xbutton.y, Ev.xbutton.button]));
+        MapNotify: Say('MapNotify');
+        UnmapNotify: Say('UnmapNotify');
         FocusIn: Say('FocusIn');
         FocusOut: Say('FocusOut');
         KeyPress: Say('KeyPress');
