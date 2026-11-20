@@ -23,7 +23,7 @@ type
     IgnoreUnmap: Integer;         { unmaps we caused ourselves }
     InputHint, HasDelete, HasTakeFocus: Boolean;
     MinW, MinH, MaxW, MaxH, IncW, IncH, BaseW, BaseH: Integer;   { client sizes }
-    Maximized, Fullscreen, Iconic, Above, Shaded: Boolean;
+    Maximized, Fullscreen, Iconic, Above, Below, Shaded: Boolean;
     UnshadeH: Integer;            { frame height to return to when unshaded }
     Desktop: Integer;             { 0..N-1, or -1 = sticky (all desktops) }
     Transient: TWindow;           { WM_TRANSIENT_FOR, 0 if none }
@@ -138,6 +138,7 @@ type
     procedure ToggleMaximize(C: TClient);
     procedure SetFullscreen(C: TClient; On: Boolean);
     procedure SetAbove(C: TClient; On: Boolean);
+    procedure SetBelow(C: TClient; On: Boolean);
     procedure SetShaded(C: TClient; On: Boolean);
     function OptsFor(C: TClient): TFrameOpts;
     procedure StartKb(Mode: TKbMode; ATime: culong);
@@ -577,6 +578,9 @@ begin
   Full := False;
   for I := 0 to FClients.Count - 1 do
     if TClient(FClients[I]).Fullscreen and not TClient(FClients[I]).Iconic then Full := True;
+  for I := 0 to FClients.Count - 1 do
+    if TClient(FClients[I]).Below and VisibleNow(TClient(FClients[I])) then
+      XLowerWindow(FDpy, TClient(FClients[I]).Frame);
   for I := 0 to High(FDocks) do
     if FDocks[I].Below then XLowerWindow(FDpy, FDocks[I].Win);
   for I := 0 to High(FDesktops) do
@@ -723,10 +727,11 @@ end;
 
 procedure TWM.UpdateNetState(C: TClient);
 var
-  V: array[0..6] of TAtom;
+  V: array[0..7] of TAtom;
   N: Integer;
 begin
   N := 0;
+  if C.Below then begin V[N] := aBelow; Inc(N); end;
   if C.Shaded then begin V[N] := aShaded; Inc(N); end;
   if C.Above then begin V[N] := aAbove; Inc(N); end;
   if C.Desktop < 0 then begin V[N] := aSticky; Inc(N); end;
@@ -1258,8 +1263,18 @@ procedure TWM.SetAbove(C: TClient; On: Boolean);
 begin
   if C.Above = On then Exit;
   C.Above := On;
+  if On then C.Below := False;     { above and below exclude each other }
   UpdateNetState(C);
   if On then RaiseClient(C) else Restack;
+end;
+
+procedure TWM.SetBelow(C: TClient; On: Boolean);
+begin
+  if C.Below = On then Exit;
+  C.Below := On;
+  if On then C.Above := False;
+  UpdateNetState(C);
+  Restack;
 end;
 
 procedure TWM.Iconify(C: TClient);
@@ -1356,6 +1371,7 @@ end;
 { ---- window menu ---- }
 
 const
+  mnBelow = 8;
   mnShade = 7;
   mnMinimize = 1;
   mnMaximize = 2;
@@ -1377,6 +1393,7 @@ begin
   else FMenu.Add(mnMaximize, 'Maximize', False, not C.Fullscreen);
   FMenu.Add(mnFullscreen, 'Fullscreen', C.Fullscreen, True);
   FMenu.Add(mnAbove, 'Always on top', C.Above, True);
+  FMenu.Add(mnBelow, 'Always below', C.Below, True);
   FMenu.Add(mnSticky, 'On all workspaces', C.Desktop < 0, True);
   FMenu.Add(mnShade, 'Shade', C.Shaded, not (C.Maximized or C.Fullscreen));
   FMenu.AddSeparator;
@@ -1404,6 +1421,7 @@ begin
   else if Id = mnFullscreen then SetFullscreen(C, not C.Fullscreen)
   else if Id = mnAbove then SetAbove(C, not C.Above)
   else if Id = mnShade then SetShaded(C, not C.Shaded)
+  else if Id = mnBelow then SetBelow(C, not C.Below)
   else if Id = mnSticky then
   begin
     if C.Desktop < 0 then MoveToDesktop(C, FCurDesk) else MoveToDesktop(C, -1);
@@ -2003,6 +2021,16 @@ begin
           Want := not C.Shaded;
         end;
         SetShaded(C, Want);
+      end
+      else if A = aBelow then
+      begin
+        case Act of
+          0: Want := False;
+          1: Want := True;
+        else
+          Want := not C.Below;
+        end;
+        SetBelow(C, Want);
       end
       else if A = aAbove then
       begin

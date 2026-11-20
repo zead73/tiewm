@@ -33,7 +33,7 @@ Run it ONLY on a display you mean to manage: `DISPLAY=:99 ./tiewm` (it refuses t
 the root; `TIEWM_THEME`, `TIEWM_FONT`, `TIEWM_DEBUG=1` are the only settings so far). SIGTERM/SIGINT hand all
 windows back to the root cleanly.
 
-Works (148 scenario checks, `tools/wmtest.sh`, scratch Xvfb on :99 only): manage/adopt/unmanage, centred
+Works (154 scenario checks, `tools/wmtest.sh`, scratch Xvfb on :99 only): manage/adopt/unmanage, centred
 placement (honours USPosition), themed frames with shape, click-to-focus with click replay to the app,
 raise on click, active/inactive repaint, title updates, titlebar drag and Alt+drag (also with Num/Caps Lock),
 Alt+right-drag resize, edge/corner resize with min-size and size-increment hints, close button
@@ -66,8 +66,9 @@ Escape puts the window back. Not available for maximized, fullscreen, minimized 
 Window menu (`twmenu.pas`, drawn with Xlib/Xft, no toolkit): right-click the titlebar, click the O button, or Alt+space
 (`window_menu`). Minimize, Maximize/Restore, Fullscreen, Always on top, On all workspaces, Move to Workspace N (the
 current one is disabled), Close. Mouse (hover, release to select, click outside to close) and keyboard (Up/Down, Return,
-Escape); the release of the click that opened it is ignored. Always on top is also a real state (`_NET_WM_STATE_ABOVE`):
-above-windows stay over normal ones but under docks and fullscreen windows.
+Escape); the release of the click that opened it is ignored. Always on top (`_NET_WM_STATE_ABOVE`) and Always below (`_NET_WM_STATE_BELOW`) are real states and exclude each other.
+Layers, bottom to top: desktop window, conky-style below-docks, below-windows, normal windows, above-windows, docks
+(fullscreen windows go over everything).
 
 Config file `~/.config/tiewm/tiewm.conf` (`tiewm.conf.example` documents everything; `TIEWM_CONFIG=FILE` picks another):
 theme, title font and alignment, button layout, number of desktops, font hinting, palette colours, and every key binding
@@ -103,7 +104,7 @@ transient/centred/focused, Vivaldi F11 fullscreen on and off. Found and fixed: l
 unless every window has `_NET_WM_DESKTOP`.
 
 Deliberately not done: other key bindings, `--replace`,
-multi-monitor, `_NET_WM_STATE_BELOW` for normal windows, modal dialogs, adopting windows that are
+multi-monitor, modal dialogs, adopting windows that are
 iconic when the WM starts, button prelight/pressed images, app icon in the menu button, session
 management, gravity/transient-for handling, `_NET_WM_MOVERESIZE`. Not yet run against the real LXQt
 session or lxqt-panel.

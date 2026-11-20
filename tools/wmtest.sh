@@ -479,12 +479,12 @@ newwin ot -t "Other" -w 300 -h 200 -c 227733 -s 300 -p 100,500; OT=$LAST_ID
 "$XDO" move 500 420 click 1; sec 0.4
 "$XDO" keydown Alt_L key space keyup Alt_L; sec 0.5; "$XDO" key Down key Down key Down key Down key Return; sec 0.8
 ! xprop -id "$MN" _NET_WM_STATE | grep -q ABOVE; check "menu: Always on top toggles off again" $?
-"$XDO" keydown Alt_L key space keyup Alt_L; sec 0.5; "$XDO" key Down key Down key Down key Down key Down key Return; sec 0.8
+"$XDO" keydown Alt_L key space keyup Alt_L; sec 0.5; "$XDO" key Down key Down key Down key Down key Down key Down key Return; sec 0.8
 [ "$(deskof "$MN")" = "4294967295" ]; check "menu: On all workspaces makes the window sticky" $?
-"$XDO" keydown Alt_L key space keyup Alt_L; sec 0.5; "$XDO" key Down key Down key Down key Down key Down key Return; sec 0.8
+"$XDO" keydown Alt_L key space keyup Alt_L; sec 0.5; "$XDO" key Down key Down key Down key Down key Down key Down key Return; sec 0.8
 [ "$(deskof "$MN")" = "0" ]; check "menu: and toggles it back to the current desktop" $?
 "$XDO" keydown Alt_L key space keyup Alt_L; sec 0.5
-"$XDO" key Down key Down key Down key Down key Down key Down key Down key Down key Return; sec 0.8
+"$XDO" key Down key Down key Down key Down key Down key Down key Down key Down key Down key Return; sec 0.8
 [ "$(deskof "$MN")" = "2" ] && [ "$(viewable "$MN")" = "0" ]; check "menu: Move to Workspace 3 (the current one is disabled and skipped)" $?
 wmctrl -s 0; stop_clients; sec 0.3
 newwin mm -t "Mouse menu" -w 300 -h 200 -c aa5522 -s 120 -p 500,300; MM=$LAST_ID
@@ -515,9 +515,9 @@ tail -3 "$TMP/sh.log" | grep -q 'ConfigureNotify .* w=300 h=200 synthetic=1'; ch
 "$XDO" move $((RX+RW-82)) $((RY-T+8)) click 1; sec 0.7
 [ "$(frameh "$SH")" = "$((200+T+M))" ]; check "S button again unrolls it (frame height $(frameh "$SH"))" $?
 ! xprop -id "$SH" _NET_WM_STATE | grep -q SHADED; check "SHADED is gone again" $?
-"$XDO" keydown Alt_L key space keyup Alt_L; sec 0.5; "$XDO" key Down key Down key Down key Down key Down key Down key Return; sec 0.8
-[ "$(frameh "$SH")" = "$T" ]; check "window menu: Shade (6th item) shades" $?
-"$XDO" keydown Alt_L key space keyup Alt_L; sec 0.5; "$XDO" key Down key Down key Down key Down key Down key Down key Return; sec 0.8
+"$XDO" keydown Alt_L key space keyup Alt_L; sec 0.5; "$XDO" key Down key Down key Down key Down key Down key Down key Down key Return; sec 0.8
+[ "$(frameh "$SH")" = "$T" ]; check "window menu: Shade (7th item) shades" $?
+"$XDO" keydown Alt_L key space keyup Alt_L; sec 0.5; "$XDO" key Down key Down key Down key Down key Down key Down key Down key Return; sec 0.8
 [ "$(frameh "$SH")" = "$((200+T+M))" ]; check "window menu: and unshades" $?
 wmctrl -i -r "$SH" -b add,shaded; sec 0.6
 [ "$(frameh "$SH")" = "$T" ]; check "wmctrl -b add,shaded shades (_NET_WM_STATE client message)" $?
@@ -544,6 +544,24 @@ G2=$(absgeom "$KM"); [ "$(field "$G2" w)" -eq $((W0+20)) ]; check "Escape cancel
 for I in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do "$XDO" key Left; done
 "$XDO" key Return; sec 0.6
 G=$(absgeom "$KM"); [ "$(field "$G" w)" -eq 200 ]; check "keyboard resize stops at the window's minimum width (200)" $?
+stop_clients
+
+echo "== 25. always below: state, exclusive with above, stays under normal windows, layer order with desktop/conky"
+newwin ds2 -t "Fake desktop" -w 1280 -h 800 -c 202030 -s 300 -p 0,0 -y desktop; DS2=$LAST_ID
+newwin bl2 -t "Fake conky" -w 200 -h 300 -c 225522 -s 300 -p 1000,50 -y dockbelow; BL2=$LAST_ID
+newwin bw -t "Below me" -w 300 -h 200 -c 5544aa -s 300 -p 400,300; BW=$LAST_ID
+newwin nw -t "Normal" -w 300 -h 200 -c 44aa55 -s 300 -p 800,100; NW=$LAST_ID
+wmctrl -i -r "$BW" -b add,below; sec 0.6
+xprop -id "$BW" _NET_WM_STATE | grep -q BELOW; check "wmctrl -b add,below sets _NET_WM_STATE_BELOW" $?
+"$XDO" move 500 400 click 1; sec 0.6
+[ "$(stackpos "$BW")" -lt "$(stackpos "$NW")" ]; check "a below window stays under a normal one even right after being clicked (bw=$(stackpos "$BW") nw=$(stackpos "$NW"))" $?
+[ "$(toppos "$DS2")" -lt "$(toppos "$BL2")" ] && [ "$(toppos "$BL2")" -lt "$(stackpos "$BW")" ]; check "layers bottom to top: desktop < conky-like dock < below window (ds=$(toppos "$DS2") bl=$(toppos "$BL2") bw=$(stackpos "$BW"))" $?
+wmctrl -i -r "$BW" -b add,above; sec 0.6
+xprop -id "$BW" _NET_WM_STATE | grep -q ABOVE && ! xprop -id "$BW" _NET_WM_STATE | grep -q BELOW; check "setting above clears below (they exclude each other)" $?
+"$XDO" keydown Alt_L key space keyup Alt_L; sec 0.5; "$XDO" key Down key Down key Down key Down key Down key Return; sec 0.8
+xprop -id "$BW" _NET_WM_STATE | grep -q BELOW && ! xprop -id "$BW" _NET_WM_STATE | grep -q ABOVE; check "window menu: Always below (5th item) sets below and clears above" $?
+"$XDO" keydown Alt_L key space keyup Alt_L; sec 0.5; "$XDO" key Down key Down key Down key Down key Down key Return; sec 0.8
+! xprop -id "$BW" _NET_WM_STATE | grep -q BELOW; check "window menu: and toggles it off" $?
 stop_clients
 
 stop_wm
