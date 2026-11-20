@@ -1,0 +1,89 @@
+# tiewm
+
+A floating X11 window manager in Free Pascal, meant to replace xfwm4 under LXQt.
+picom already does the compositing, so the WM only has to manage and draw frames.
+Feature list: `../xfwm4-checklist.md`.
+
+## Status (2026-11-20)
+
+Step 1, the xfwm4 theme engine, is done as far as it can be tested without an X server:
+
+- `twimage.pas` – ARGB pixel buffers, PNG load/save, XPM parser with symbolic colours.
+- `twtheme.pas` – reads `/usr/share/themes/<name>/xfwm4` (themerc + parts), derives the
+  palette, composes a whole frame (corners, title strip, buttons, sides, bottom) into a `TImg`.
+- `tools/themetest.pas` – composes a frame and diffs it against a real xfwm4 screenshot.
+- `tools/themescan.pas` – loads and composes every installed xfwm4 theme (7 here, all load).
+- `tools/testwin.pas` – test client (logs ConfigureNotify/clicks/focus/WM_DELETE, optional min size,
+  USPosition, delayed title change); `tools/xdo.pas` – fake input via XTest; `tools/xgeom.pas` – window
+  tree / root-relative geometry dump; `tools/wmtest.sh` – the scenario suite; `tools/paintbench.pas` –
+  paint timing (2560x1440 frame: ~31 ms).
+
+Step 2, title text and shape, is also done (needs a display; tested in Xvfb):
+
+- `twxshape.pas` – own binding to libXext's Shape extension (FPC has none).
+- `twxft.pas` – own Xft/fontconfig binding (FPC's Xft unit lacks colour alloc and has awkward
+  records) + `PangoToFontconfig` ("Sans Bold 11" -> "Sans:bold:size=11").
+- `twxdraw.pas` – `TTitleFont` (width, ellipsis fit, outline/shadow draw), `ImgToPixmap`,
+  `MaskFromImg`, and `PaintFrame` which returns a finished frame pixmap + shape mask.
+- `tools/framecheck.pas` – diffs `PaintFrame` output against real xfwm4; `tools/shapewin.pas`
+  puts a shaped frame window on screen for a screenshot check.
+
+Step 3, the window manager (`tiewm.pas` + `twwm.pas`), is a verified vertical slice. Build: `./build.sh`.
+Run it ONLY on a display you mean to manage: `DISPLAY=:99 ./tiewm` (it refuses to start if another WM owns
+the root; `TIEWM_THEME`, `TIEWM_FONT`, `TIEWM_DEBUG=1` are the only settings so far). SIGTERM/SIGINT hand all
+windows back to the root cleanly.
+
+Works (30 scenario checks, `tools/wmtest.sh`, scratch Xvfb on :99 only): manage/adopt/unmanage, centred
+placement (honours USPosition), themed frames with shape, click-to-focus with click replay to the app,
+raise on click, active/inactive repaint, title updates, titlebar drag and Alt+drag (also with Num/Caps Lock),
+Alt+right-drag resize, edge/corner resize with min-size and size-increment hints, close button
+(WM_DELETE_WINDOW, XKillClient fallback), maximize button / double-click / `_NET_WM_STATE`, dock struts for
+the work area, save-set so clients survive a WM crash, EWMH: `_NET_SUPPORTED`, `_NET_SUPPORTING_WM_CHECK`,
+`_NET_CLIENT_LIST(_STACKING)`, `_NET_ACTIVE_WINDOW` (+ client message), `_NET_CLOSE_WINDOW`,
+`_NET_FRAME_EXTENTS`, `_NET_WORKAREA`, 1 desktop.
+
+Deliberately not done: workspaces, iconify/shade/stick, key bindings, Alt+Tab, `--replace`, multi-monitor,
+fullscreen, window menu, button prelight/pressed images, app icon in the menu button, config file, session
+management, gravity/transient-for handling, `_NET_WM_MOVERESIZE`. Not yet run against the real LXQt
+session or lxqt-panel.
+
+## What was learned from real xfwm4 (Daloa, Adwaita-dark, 2026-11-20)
+
+- A part = XPM (symbolic colours filled from a GTK-derived palette) with the PNG alpha-blended
+  on top; where the XPM is transparent the PNG is not drawn. The PNG sets the size.
+- Palette: `*_hilight_N` = base shaded 1.3, `*_shadow_N` = base shaded 0.7 (GTK2 HLS shade),
+  `*_mid_N` = average of the two (mid not yet verified). Here color_1 active = #14529E,
+  inactive = #323232, color_2 = #353535 for both. Left/right/bottom borders use color_2.
+- `themerc` beats xfconf for `button_offset` (1) and `button_spacing` (-1): pixels match themerc.
+- Buttons start at x = left border + button_offset and overlap by -spacing; the right group is
+  placed right-to-left but drawn left-to-right (each button's left edge wins).
+- Frame extents come from the parts: left/right/bottom = pixmap widths/height, top = title tile height
+  (Daloa 5,5,19,5 — same as `_NET_FRAME_EXTENTS` xfwm4 reports).
+
+Frame graphics vs. real xfwm4 (ignoring client area, title text, app icon): 19 of 6343 pixels (active)
+and 19 of 9743 (inactive) – all in the menu button's left edge column (x=6).
+
+Title text and shape (`framecheck`): borders+bottom 0 differing pixels; title row incl. text 128 of 5472
+(active, 2.3%) and 38 of 7372 (inactive, 0.5%) – all antialiasing differences in the glyphs. Shape: the
+4 corner cuts land exactly on background pixels of the reference, and a real shaped window shows the
+root through them.
+
+Text rules measured from xfwm4 (Sans Bold 11, Xvfb 96 dpi):
+- text x = end of the left buttons + 5 (+ title_horizontal_offset); baseline =
+  (title height - font height)/2 + ascent + title_vertical_offset_*  (19, 21, 16 -> baseline 16)
+- greyscale antialiasing and full hinting match best (hintstyle 3: 128 vs 227 mismatches at slight, 434 none);
+  the user's fontconfig forces rgba=rgb *after* name parsing, so it has to be set on the matched pattern
+- `title_shadow_active=frame` = outline in `active_shadow_1`, drawn at the 4 neighbouring offsets
+- inactive text colour (not in Daloa's themerc) measured as #919190; no shadow when `false`
+- the menu button's app icon is not drawn yet (client icon support is a later step)
+
+## Reproducing the reference frames
+
+    Xvfb :99 -screen 0 1024x768x24 &
+    DISPLAY=:99 xfwm4 --compositor=off &
+    DISPLAY=:99 tools/testwin "Active window" 400 300 ff00ff &
+    DISPLAY=:99 tools/testwin "Other window" 300 200 00ffff &
+    DISPLAY=:99 import -window root ref/daloa-full.png
+
+Build tools: `fpc -Mobjfpc -Sh -O1 -Fu.. themetest.pas` (from `tools/`). `framecheck` and `shapewin` need
+`DISPLAY` pointing at an X server (Xvfb is fine).

@@ -1,0 +1,174 @@
+#!/bin/bash
+# Scenario tests for tiewm. Runs ONLY on the scratch display :99 (Xvfb),
+# never on the real session. Build the tools first (see README).
+#   tools/wmtest.sh            run all scenarios
+set -u
+export DISPLAY=:99
+HERE="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(dirname "$HERE")"
+TMP="${WMTEST_TMP:-/tmp/tiewm-test}/wmtest"
+mkdir -p "$TMP"
+TW="$HERE/testwin"; XDO="$HERE/xdo"; XG="$HERE/xgeom"; WM="$ROOT/tiewm"
+PASS=0; FAIL=0
+
+check() {  # name, condition-exit-status, [detail]
+  if [ "$2" -eq 0 ]; then PASS=$((PASS+1)); echo "PASS  $1"; else FAIL=$((FAIL+1)); echo "FAIL  $1  ${3:-}"; fi
+}
+sec() { sleep "${1:-0.4}"; }
+
+start_xvfb() {
+  if ! pgrep -x Xvfb >/dev/null; then
+    Xvfb :99 -screen 0 1280x800x24 -nolisten tcp >/dev/null 2>&1 &
+    sleep 1
+  fi
+}
+start_wm() { TIEWM_DEBUG=1 "$WM" 2>"$TMP/wm.log" & WMPID=$!; sleep 0.8; }
+stop_wm() { kill -TERM "$WMPID" 2>/dev/null; wait "$WMPID" 2>/dev/null; }
+stop_clients() { pkill -x testwin 2>/dev/null; sleep 0.3; }
+cleanup() { stop_clients; kill "$WMPID" 2>/dev/null; wait "$WMPID" 2>/dev/null; }
+trap cleanup EXIT
+
+# new window: name, args...  -> sets LAST_ID
+newwin() {
+  local name="$1"; shift
+  "$TW" "$@" >"$TMP/$name.log" 2>&1 &
+  eval "PID_$name=$!"
+  sleep 0.7
+  LAST_ID=$(sed -n 's/^mapped id=\(0x[0-9a-f]*\).*/\1/p' "$TMP/$name.log" | head -1)
+}
+absgeom() { "$XG" abs "$(printf '%d' "$1")"; }   # prints: abs x= y= w= h=
+field() { echo "$1" | tr ' ' '\n' | sed -n "s/^$2=//p"; }
+active() { xprop -root _NET_ACTIVE_WINDOW | sed 's/.*# //;s/,.*//'; }
+hexnorm() { printf '0x%x' "$(printf '%d' "$1")"; }
+
+start_xvfb
+pkill -x tiewm 2>/dev/null; stop_clients
+M=5; T=19   # Daloa: left/right/bottom border 5, title 19
+
+echo "== 1. startup on an empty display"
+start_wm
+wmctrl -m 2>/dev/null | grep -q 'Name: tiewm'; check "wmctrl -m reports tiewm (EWMH check window)" $?
+kill -0 "$WMPID" 2>/dev/null; check "tiewm still running" $?
+
+echo "== 2. refuses to start when a WM already owns the root"
+OUT=$("$WM" 2>&1); RC=$?
+[ $RC -ne 0 ] && echo "$OUT" | grep -q 'another window manager'; check "second tiewm exits with message (rc=$RC)" $?
+stop_wm
+
+echo "== 3. adopts a window that exists before the WM starts"
+newwin pre -t "Pre-existing" -w 300 -h 200 -c ffaa00 -s 60 -p 200,150
+PRE=$LAST_ID; G0=$(absgeom "$PRE")
+start_wm
+G1=$(absgeom "$PRE")
+[ "$(field "$G0" x)" = "$(field "$G1" x)" ] && [ "$(field "$G0" y)" = "$(field "$G1" y)" ]; check "client stays where it was ($G0 -> $G1)" $?
+"$XG" | grep -q "win=$(hexnorm "$PRE")" ; R1=$?
+"$XG" | awk -v id="$(printf '0x%X' "$PRE")" '/^win=/{top=$1} /^  win=/{ if ($1=="win="id) print top}' | grep -q 'win=' ; check "client is now inside a frame window" $?
+[ "$(active)" = "" ] || true
+stop_clients
+
+echo "== 4. new window is framed, centred, focused"
+newwin a -t "Window A" -w 400 -h 300 -c 00cc66 -s 90
+A=$LAST_ID; GA=$(absgeom "$A")
+EX=$(( (1280 - (400+2*M)) / 2 + M )); EY=$(( (800 - (300+T+M)) / 2 + T ))
+[ "$(field "$GA" x)" = "$EX" ] && [ "$(field "$GA" y)" = "$EY" ]; check "centred: expected client at $EX,$EY got $GA" $?
+[ "$(hexnorm "$(active)")" = "$(hexnorm "$A")" ]; check "new window becomes _NET_ACTIVE_WINDOW" $?
+xprop -id "$A" _NET_FRAME_EXTENTS | grep -q "= $M, $M, $T, $M"; check "_NET_FRAME_EXTENTS set" $?
+wmctrl -l | grep -q "Window A"; check "wmctrl -l lists it via _NET_CLIENT_LIST" $?
+
+echo "== 5. click on a second window: focus switches and the app still gets the click"
+newwin b -t "Window B" -w 300 -h 200 -c 3366ff -s 90 -p 40,60
+B=$LAST_ID
+newwin a2 -t "Window A2" -w 300 -h 200 -c ffcc00 -s 90 -p 700,500
+A2=$LAST_ID
+"$XDO" move 800 600 click 1; sec
+[ "$(hexnorm "$(active)")" = "$(hexnorm "$A2")" ]; check "clicking A2 keeps/sets focus on A2" $?
+"$XDO" move 100 100 click 1; sec
+[ "$(hexnorm "$(active)")" = "$(hexnorm "$B")" ]; check "clicking B moves focus to B" $?
+grep -q 'ButtonPress x=60 y=40 button=1' "$TMP/b.log"; check "B received the replayed click at client coords 60,40" $?
+"$XDO" move 800 600 click 1; sec
+grep -q 'ButtonPress x=100 y=100 button=1' "$TMP/a2.log"; check "A2 received its click" $?
+
+echo "== 6. move: titlebar drag, Alt+drag, with Num Lock/Caps Lock on and off"
+GB0=$(absgeom "$B"); BX0=$(field "$GB0" x); BY0=$(field "$GB0" y)
+"$XDO" drag 150 $((BY0-8)) 250 $((BY0+42)); sec 0.6      # titlebar of B: client top is BY0, title is above it
+GB1=$(absgeom "$B")
+[ "$(field "$GB1" x)" -eq $((BX0+100)) ] && [ "$(field "$GB1" y)" -eq $((BY0+50)) ]; check "titlebar drag moved B by +100,+50 ($GB0 -> $GB1)" $?
+GB0=$GB1; BX0=$(field "$GB0" x); BY0=$(field "$GB0" y)
+"$XDO" keydown Alt_L drag $((BX0+50)) $((BY0+50)) $((BX0+30)) $((BY0+20)) keyup Alt_L; sec 0.6
+GB1=$(absgeom "$B")
+[ "$(field "$GB1" x)" -eq $((BX0-20)) ] && [ "$(field "$GB1" y)" -eq $((BY0-30)) ]; check "Alt+drag moved B by -20,-30 ($GB0 -> $GB1)" $?
+for LK in Num_Lock Caps_Lock; do
+  "$XDO" key $LK; sec
+  GB0=$(absgeom "$B"); BX0=$(field "$GB0" x); BY0=$(field "$GB0" y)
+  "$XDO" keydown Alt_L drag $((BX0+50)) $((BY0+50)) $((BX0+70)) $((BY0+60)) keyup Alt_L; sec 0.6
+  GB1=$(absgeom "$B")
+  [ "$(field "$GB1" x)" -eq $((BX0+20)) ] && [ "$(field "$GB1" y)" -eq $((BY0+10)) ]; check "Alt+drag still works with $LK toggled ($GB0 -> $GB1)" $?
+  "$XDO" key $LK; sec
+done
+
+echo "== 7. resize: edge/corner drag, minimum size honoured"
+stop_clients
+newwin r -t "Resize me" -w 300 -h 200 -c 8844cc -s 90 -p 300,250 -m 200,150
+R=$LAST_ID
+# bottom-right corner of the frame: client (300,250) size 300x200 -> frame right edge x=605+? frame: x 295..605, y 231..455
+"$XDO" drag 603 453 663 493; sec 0.6
+GR=$(absgeom "$R")
+[ "$(field "$GR" w)" -eq 360 ] && [ "$(field "$GR" h)" -eq 240 ]; check "SE corner drag grew client to 360x240 (got $GR)" $?
+# left edge drag to the right far past the minimum width: client must stop at min 200
+GR0=$(absgeom "$R"); RX=$(field "$GR0" x); RY=$(field "$GR0" y)
+"$XDO" drag $((RX-3)) $((RY+60)) $((RX+400)) $((RY+60)); sec 0.6
+GR=$(absgeom "$R")
+[ "$(field "$GR" w)" -eq 200 ]; check "left-edge drag stops at min width 200 (got $GR)" $?
+grep -q 'ConfigureNotify x=.* w=200 h=240 synthetic=1' "$TMP/r.log"; check "client was told its size with a synthetic ConfigureNotify" $?
+
+echo "== 8. close button sends WM_DELETE_WINDOW and the client exits cleanly"
+GR=$(absgeom "$R"); RX=$(field "$GR" x); RY=$(field "$GR" y); RW=$(field "$GR" w)
+# close button: right group ends at frame right - 5(border) - 1(offset); close is the last, 24 wide: its centre is ~12 left of that
+"$XDO" move $((RX+RW+M-1-12)) $((RY-T+8)) click 1; sec 0.8
+grep -q WM_DELETE_WINDOW "$TMP/r.log"; check "testwin received WM_DELETE_WINDOW" $?
+sleep 0.5; kill -0 "$PID_r" 2>/dev/null; [ $? -ne 0 ]; check "testwin exited after close" $?
+wmctrl -l | grep -q 'Resize me'; [ $? -ne 0 ]; check "closed window removed from client list" $?
+
+echo "== 9. maximize button / double-click toggles"
+newwin m -t "Maximize" -w 300 -h 200 -c cc3333 -s 90 -p 300,250
+MX=$LAST_ID
+GM0=$(absgeom "$MX"); MXX=$(field "$GM0" x); MYY=$(field "$GM0" y)
+# maximize button is third from the right: S H M C ; centre of M ~ right - 1 - 24 - 12 + (overlap 1)
+"$XDO" move $((MXX+300+M-1-24+1-12)) $((MYY-T+8)) click 1; sec 0.8
+GM1=$(absgeom "$MX")
+[ "$(field "$GM1" w)" -eq $((1280-2*M)) ] && [ "$(field "$GM1" h)" -eq $((800-T-M)) ]; check "maximize fills the work area (got $GM1)" $?
+xprop -id "$MX" _NET_WM_STATE | grep -q MAXIMIZED_VERT; check "_NET_WM_STATE has MAXIMIZED_VERT" $?
+"$XDO" move 640 $((T/2)) click 1 click 1; sec 0.8
+GM2=$(absgeom "$MX")
+[ "$(field "$GM2" w)" -eq 300 ] && [ "$(field "$GM2" x)" -eq "$MXX" ]; check "double-click on titlebar restores the old geometry (got $GM2)" $?
+
+echo "== 10. title change repaints the frame"
+stop_clients
+newwin t -t "Before" -w 300 -h 200 -c 336699 -s 90 -p 300,250 -T "After the change,6"
+import -window root "$TMP/t1.png" 2>/dev/null
+sleep 6; import -window root "$TMP/t2.png" 2>/dev/null
+D=$(compare -metric AE "$TMP/t1.png" "$TMP/t2.png" null: 2>&1 | head -1 | awk '{printf "%d", $1}')
+[ "${D:-0}" -gt 100 ]; check "screen differs after the title changed (AE=$D)" $?
+
+echo "== 11. frame matches the reference rendered by real xfwm4"
+stop_clients
+newwin ref -t "Other window" -w 300 -h 200 -c 00ffff -s 90 -p 605,419
+sleep 0.5; import -window root "$TMP/full.png" 2>/dev/null
+magick "$TMP/full.png" -crop 310x224+600+400 +repage "$TMP/frame.png"
+AE=$(compare -metric AE -fuzz 3% "$TMP/frame.png" "$ROOT/ref/frame-active-310x224.png" null: 2>&1 | head -1 | awk '{printf "%d", $1}')
+[ "${AE:-99999}" -lt 700 ]; check "live frame vs xfwm4 reference: $AE of 69440 px differ (icon + glyph AA expected, limit 700)" $?
+cp "$TMP/frame.png" "$ROOT/out/live-frame-active.png" 2>/dev/null
+
+echo "== 12. killing the WM leaves clients mapped"
+stop_clients
+newwin k -t "Survivor" -w 300 -h 200 -c 999999 -s 90 -p 500,300
+K=$LAST_ID
+kill -KILL "$WMPID"; wait "$WMPID" 2>/dev/null; sleep 0.8
+"$XG" | grep -q "win=$(printf '0x%X' "$(printf '%d' "$K")").*viewable=1"; check "client is a viewable top-level window after SIGKILL of the WM (save-set)" $?
+start_wm
+sleep 0.5; "$XG" | grep -q "name=\"Survivor\""; check "a restarted WM adopts it again" $?
+stop_wm
+stop_clients
+echo
+echo "passed $PASS, failed $FAIL"
+[ "$FAIL" -eq 0 ]

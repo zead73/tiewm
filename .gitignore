@@ -1,0 +1,16 @@
+# build products
+*.o
+*.ppu
+*.a
+/tiewm
+/tools/testwin
+/tools/xdo
+/tools/xgeom
+/tools/themetest
+/tools/themescan
+/tools/framecheck
+/tools/shapewin
+/tools/paintbench
+# generated screenshots/composites (the demo screenshot is kept)
+/out/*
+!/out/tiewm-demo.png
