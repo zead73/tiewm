@@ -16,6 +16,12 @@ check() {  # name, condition-exit-status, [detail]
 }
 sec() { sleep "${1:-0.4}"; }
 
+# NEVER pkill by name: the live session runs its own "tiewm". Only touch one whose DISPLAY is :99.
+kill_scratch_wm() {
+  for p in $(pgrep -x tiewm); do
+    if tr '\0' '\n' <"/proc/$p/environ" 2>/dev/null | grep -qx 'DISPLAY=:99'; then kill -TERM "$p" 2>/dev/null; fi
+  done
+}
 start_xvfb() {
   if ! pgrep -x Xvfb >/dev/null; then
     Xvfb :99 -screen 0 1280x800x24 -nolisten tcp >/dev/null 2>&1 &
@@ -34,7 +40,7 @@ newwin() {
   "$TW" "$@" >"$TMP/$name.log" 2>&1 &
   eval "PID_$name=$!"
   sleep 0.7
-  LAST_ID=$(sed -n 's/^mapped id=\(0x[0-9a-f]*\).*/\1/p' "$TMP/$name.log" | head -1)
+  LAST_ID=$(sed -n 's/^mapped id=\(0x[0-9a-fA-F]*\).*/\1/p' "$TMP/$name.log" | head -1)
 }
 absgeom() { "$XG" abs "$(printf '%d' "$1")"; }   # prints: abs x= y= w= h=
 field() { echo "$1" | tr ' ' '\n' | sed -n "s/^$2=//p"; }
@@ -48,10 +54,13 @@ viewable() {  # client id -> 1/0 (map state of the client window inside its fram
 stackpos() {  # client id -> index of its frame among root children (bottom = 0)
   "$XG" | awk -v id="$(printf '0x%X' "$(printf '%d' "$1")")" '/^win=/{n++} /^  win=/{ if ($1=="win="id) print n }'
 }
+toppos() {  # id of an unframed top-level window -> index among root children
+  "$XG" | awk -v id="$(printf '0x%X' "$(printf '%d' "$1")")" '/^win=/{n++; if ($1=="win="id) print n}'
+}
 wmstate() { xprop -id "$1" WM_STATE | sed -n 's/.*window state: *//p' | sed 's/[^A-Za-z].*//'; }
 
 start_xvfb
-pkill -x tiewm 2>/dev/null; stop_clients
+kill_scratch_wm; stop_clients
 M=5; T=19   # Daloa: left/right/bottom border 5, title 19
 
 echo "== 1. startup on an empty display"
@@ -264,6 +273,22 @@ G=$(absgeom "$DLG"); DX=$(field "$G" x); DY=$(field "$G" y)
 grep -q WM_DELETE_WINDOW "$TMP/dlg.log"; check "Alt+F4 closed the dialog" $?
 [ "$(hexnorm "$(active)")" = "$(hexnorm "$PAR")" ]; check "focus returns to the parent after the dialog closes" $?
 stop_clients
+echo "== 19. stacking layers: desktop window at the bottom, panel-like dock on top, conky-like dock below normal windows"
+newwin dk -t "Fake panel" -w 400 -h 40 -c 111111 -s 120 -p 0,760 -y dock; DK=$LAST_ID
+newwin bl -t "Fake conky" -w 200 -h 300 -c 225522 -s 120 -p 900,50 -y dockbelow; BL=$LAST_ID
+newwin ds -t "Fake desktop" -w 1280 -h 800 -c 202030 -s 120 -p 0,0 -y desktop; DS=$LAST_ID    # mapped last, like pcmanfm-desktop
+newwin nm -t "Normal window" -w 400 -h 300 -c aa7733 -s 120 -p 880,30; NM=$LAST_ID
+"$XDO" move 900 100 click 1; sec 0.5
+[ "$(toppos "$DS")" -lt "$(toppos "$BL")" ]; check "desktop window is below the conky-like dock (ds=$(toppos "$DS") bl=$(toppos "$BL"))" $?
+[ "$(toppos "$BL")" -lt "$(stackpos "$NM")" ]; check "conky-like dock is below normal windows (bl=$(toppos "$BL") nm=$(stackpos "$NM"))" $?
+[ "$(stackpos "$NM")" -lt "$(toppos "$DK")" ]; check "panel-like dock is above normal windows (nm=$(stackpos "$NM") dk=$(toppos "$DK"))" $?
+[ "$(toppos "$DS")" -le 3 ]; check "desktop window is at the very bottom (index $(toppos "$DS"))" $?
+wmctrl -i -r "$NM" -b add,fullscreen; sec 0.6
+[ "$(stackpos "$NM")" -gt "$(toppos "$DK")" ]; check "a fullscreen window covers the panel-like dock" $?
+wmctrl -i -r "$NM" -b remove,fullscreen; sec 0.6
+[ "$(stackpos "$NM")" -lt "$(toppos "$DK")" ]; check "panel-like dock is back on top after leaving fullscreen" $?
+stop_clients
+
 stop_wm
 
 echo

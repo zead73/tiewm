@@ -36,6 +36,7 @@ type
   TDock = record
     Win: TWindow;
     Left, Right, Top, Bottom: Integer;
+    Below: Boolean;      { _NET_WM_STATE_BELOW, e.g. conky: stays under normal windows }
   end;
 
   TExt = record
@@ -58,6 +59,7 @@ type
     FClients: TList;       { creation order }
     FMru: TList;           { most recently focused last }
     FDocks: array of TDock;
+    FDesktops: array of TWindow;   { _NET_WM_WINDOW_TYPE_DESKTOP windows: always at the bottom }
     FFocused: TClient;
     FCheckWin: TWindow;
     FQuit: Boolean;
@@ -67,7 +69,7 @@ type
     aSupported, aNetWmName, aActive, aClientList, aClientListStk, aFrameExtents: TAtom;
     aNetWmState, aMaxVert, aMaxHorz, aCloseWindow, aWindowType: TAtom;
     aTypeDock, aTypeDesktop, aTypeMenu, aTypeDropdown, aTypePopup, aTypeTooltip, aTypeNotification, aTypeCombo, aTypeDnd: TAtom;
-    aHidden, aFullscreen, aWmDesktop: TAtom;
+    aHidden, aFullscreen, aWmDesktop, aBelow: TAtom;
     aStrut, aStrutPartial, aNumDesktops, aCurDesktop, aWorkarea, aDeskGeom, aDeskViewport, aSupportingCheck: TAtom;
     { drag state }
     FDrag: TDragKind;
@@ -95,6 +97,8 @@ type
     procedure ReadHints(C: TClient);
     function WindowTypeIs(Win: TWindow; T: TAtom): Boolean;
     function IsUnframed(Win: TWindow): Boolean;
+    function HasState(Win: TWindow; St: TAtom): Boolean;
+    procedure Restack;
     procedure ReadStruts(var D: TDock);
     procedure UpdateWorkarea;
     procedure WorkArea(out AX, AY, AW, AH: Integer);
@@ -239,6 +243,7 @@ begin
   aTypeDnd := A('_NET_WM_WINDOW_TYPE_DND');
   aHidden := A('_NET_WM_STATE_HIDDEN'); aFullscreen := A('_NET_WM_STATE_FULLSCREEN');
   aWmDesktop := A('_NET_WM_DESKTOP');
+  aBelow := A('_NET_WM_STATE_BELOW');
   aStrut := A('_NET_WM_STRUT'); aStrutPartial := A('_NET_WM_STRUT_PARTIAL');
   aNumDesktops := A('_NET_NUMBER_OF_DESKTOPS'); aCurDesktop := A('_NET_CURRENT_DESKTOP');
   aWorkarea := A('_NET_WORKAREA'); aDeskGeom := A('_NET_DESKTOP_GEOMETRY');
@@ -380,6 +385,41 @@ begin
   finally
     L.Free;
   end;
+end;
+
+function TWM.HasState(Win: TWindow; St: TAtom): Boolean;
+var
+  L: TList;
+  I: Integer;
+begin
+  Result := False;
+  L := GetAtoms(Win, aNetWmState);
+  try
+    for I := 0 to L.Count - 1 do
+      if TAtom(PtrUInt(L[I])) = St then Result := True;
+  finally
+    L.Free;
+  end;
+end;
+
+{ Layers, bottom to top: desktop windows, "below" docks (conky), normal windows,
+  docks (panel). Normal frames get raised on their own; this puts the others back.
+  While a window is fullscreen the panel is left alone so it cannot cover it. }
+procedure TWM.Restack;
+var
+  I: Integer;
+  Full: Boolean;
+begin
+  Full := False;
+  for I := 0 to FClients.Count - 1 do
+    if TClient(FClients[I]).Fullscreen and not TClient(FClients[I]).Iconic then Full := True;
+  for I := 0 to High(FDocks) do
+    if FDocks[I].Below then XLowerWindow(FDpy, FDocks[I].Win);
+  for I := 0 to High(FDesktops) do
+    XLowerWindow(FDpy, FDesktops[I]);
+  if not Full then
+    for I := 0 to High(FDocks) do
+      if not FDocks[I].Below then XRaiseWindow(FDpy, FDocks[I].Win);
 end;
 
 procedure TWM.ReadStruts(var D: TDock);
@@ -733,13 +773,22 @@ begin
     begin
       for I := 0 to High(FDocks) do if FDocks[I].Win = Win then begin XMapWindow(FDpy, Win); Exit; end;
       Dk.Win := Win;
+      Dk.Below := HasState(Win, aBelow);
       ReadStruts(Dk);
       SetLength(FDocks, Length(FDocks) + 1);
       FDocks[High(FDocks)] := Dk;
       XSelectInput(FDpy, Win, PropertyChangeMask or StructureNotifyMask);
       UpdateWorkarea;
+    end
+    else if WindowTypeIs(Win, aTypeDesktop) then
+    begin
+      for I := 0 to High(FDesktops) do if FDesktops[I] = Win then begin XMapWindow(FDpy, Win); Restack; Exit; end;
+      SetLength(FDesktops, Length(FDesktops) + 1);
+      FDesktops[High(FDesktops)] := Win;
+      XSelectInput(FDpy, Win, StructureNotifyMask);
     end;
     XMapWindow(FDpy, Win);
+    Restack;
     Exit;
   end;
   M := FTheme.Metrics;
@@ -846,6 +895,7 @@ begin
           Manage(Kids[I], True);
       if Kids <> nil then XFree(Kids);
     end;
+    Restack;
   finally
     XUngrabServer(FDpy);
   end;
@@ -885,6 +935,7 @@ procedure TWM.RaiseClient(C: TClient);
 begin
   XRaiseWindow(FDpy, C.Frame);
   RaiseTransients(C, 0);
+  Restack;
 end;
 
 procedure TWM.RaiseTransients(C: TClient; Depth: Integer);
@@ -1060,6 +1111,7 @@ begin
   SetFrameExtentsProp(C);
   SendConfigure(C);
   UpdateNetState(C);
+  Restack;   { panel goes back on top (or stays below while a window is fullscreen) }
 end;
 
 { ---- keyboard: Alt+F4, Alt+Tab cycling, Super+Return, Alt+F9, Alt+F11 ---- }
@@ -1323,6 +1375,13 @@ begin
     Unmanage(C, True);
     Exit;
   end;
+  for I := 0 to High(FDesktops) do
+    if FDesktops[I] = Ev.window then
+    begin
+      FDesktops[I] := FDesktops[High(FDesktops)];
+      SetLength(FDesktops, Length(FDesktops) - 1);
+      Break;
+    end;
   for I := 0 to High(FDocks) do
     if FDocks[I].Win = Ev.window then
     begin
@@ -1445,7 +1504,25 @@ var
   A: TAtom;
 begin
   C := FindClient(Ev.window);
-  if C = nil then Exit;
+  if C = nil then
+  begin
+    if Ev.message_type = aNetWmState then
+      for K := 0 to High(FDocks) do
+        if FDocks[K].Win = Ev.window then
+        begin
+          if (TAtom(Ev.data.l[1]) = aBelow) or (TAtom(Ev.data.l[2]) = aBelow) then
+          begin
+            case Ev.data.l[0] of
+              0: FDocks[K].Below := False;
+              1: FDocks[K].Below := True;
+            else
+              FDocks[K].Below := not FDocks[K].Below;
+            end;
+            Restack;
+          end;
+        end;
+    Exit;
+  end;
   if Ev.message_type = aActive then
     Activate(C, CurrentTime)
   else if Ev.message_type = aCloseWindow then
@@ -1493,8 +1570,16 @@ begin
   for I := 0 to High(FDocks) do
     if FDocks[I].Win = Ev.window then
     begin
-      ReadStruts(FDocks[I]);
-      UpdateWorkarea;
+      if Ev.atom = aNetWmState then
+      begin
+        FDocks[I].Below := HasState(Ev.window, aBelow);
+        Restack;
+      end
+      else
+      begin
+        ReadStruts(FDocks[I]);
+        UpdateWorkarea;
+      end;
       Exit;
     end;
   C := FindClient(Ev.window);

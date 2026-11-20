@@ -33,7 +33,7 @@ Run it ONLY on a display you mean to manage: `DISPLAY=:99 ./tiewm` (it refuses t
 the root; `TIEWM_THEME`, `TIEWM_FONT`, `TIEWM_DEBUG=1` are the only settings so far). SIGTERM/SIGINT hand all
 windows back to the root cleanly.
 
-Works (63 scenario checks, `tools/wmtest.sh`, scratch Xvfb on :99 only): manage/adopt/unmanage, centred
+Works (69 scenario checks, `tools/wmtest.sh`, scratch Xvfb on :99 only): manage/adopt/unmanage, centred
 placement (honours USPosition), themed frames with shape, click-to-focus with click replay to the app,
 raise on click, active/inactive repaint, title updates, titlebar drag and Alt+drag (also with Num/Caps Lock),
 Alt+right-drag resize, edge/corner resize with min-size and size-increment hints, close button
@@ -48,6 +48,14 @@ all with Caps/Num Lock; fullscreen (`_NET_WM_STATE_FULLSCREEN`, no decorations, 
 iconify (H button, Alt+F9, `WM_CHANGE_STATE`, `_NET_WM_STATE_HIDDEN`, WM_STATE Iconic, restored by
 `_NET_ACTIVE_WINDOW` / Alt+Tab / the client mapping itself again); `WM_TRANSIENT_FOR` dialogs (centred over the
 parent, kept above it when it is raised, iconified with it, focus returns to the parent when the dialog closes).
+
+Stacking layers (found on the first real session, 2026-11-20: the full-screen pcmanfm-desktop window covered the
+panel and conky): desktop-type windows are kept at the very bottom, docks with `_NET_WM_STATE_BELOW` (conky) just
+above them, normal frames above that, other docks (the panel) on top; while a window is fullscreen the panel is
+left underneath. Re-applied after every raise, fullscreen change and dock/desktop mapping.
+
+Careful when testing: the live session runs a process called `tiewm` too, so test scripts must never `pkill` by name
+(`wmtest.sh` only signals a tiewm whose DISPLAY is :99).
 
 Nested trial (`tools/nested.sh start|stop|shot`, needs xorg-server-xephyr): tiewm in Xephyr :2 with its own D-Bus
 session and a copy of the LXQt config, running the real lxqt-panel, pcmanfm-qt, qterminal and Vivaldi (throwaway
