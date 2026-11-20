@@ -25,6 +25,7 @@ type
     MinW, MinH, MaxW, MaxH, IncW, IncH, BaseW, BaseH: Integer;   { client sizes }
     Maximized, Fullscreen, Iconic, Above, Below, Shaded: Boolean;
     Decorated: Boolean;           { False: no frame graphics at all (the app draws its own) }
+    DecorUser: Integer;           { 0 = follow the app's hints, 1 = user wants a titlebar, 2 = user wants none }
     UnshadeH: Integer;            { frame height to return to when unshaded }
     Desktop: Integer;             { 0..N-1, or -1 = sticky (all desktops) }
     Transient: TWindow;           { WM_TRANSIENT_FOR, 0 if none }
@@ -1297,6 +1298,10 @@ begin
     C.Y := CY - E.T;
     C.W := CW + E.L + E.R;
     C.H := CH + E.T + E.B;
+    { a titlebar that would land off the top/left of the work area is pushed back in }
+    WorkArea(AX, AY, AW, AH);
+    if C.Y < AY then C.Y := AY;
+    if C.X < AX then C.X := AX;
   end;
   XMoveResizeWindow(FDpy, C.Frame, C.X, C.Y, C.W, C.H);
   XMoveResizeWindow(FDpy, C.Win, E.L, E.T, CW, CH);
@@ -1453,6 +1458,7 @@ end;
 { ---- window menu ---- }
 
 const
+  mnNoTitle = 9;
   mnBelow = 8;
   mnShade = 7;
   mnMinimize = 1;
@@ -1478,6 +1484,7 @@ begin
   FMenu.Add(mnBelow, 'Always below', C.Below, True);
   FMenu.Add(mnSticky, 'On all workspaces', C.Desktop < 0, True);
   FMenu.Add(mnShade, 'Shade', C.Shaded, C.Decorated and not (C.Maximized or C.Fullscreen));
+  FMenu.Add(mnNoTitle, 'No titlebar', not C.Decorated, True);
   FMenu.AddSeparator;
   for K := 0 to FNumDesk - 1 do
     FMenu.Add(mnDesktop + K, 'Move to Workspace ' + IntToStr(K + 1), C.Desktop = K, C.Desktop <> K);
@@ -1503,6 +1510,12 @@ begin
   else if Id = mnFullscreen then SetFullscreen(C, not C.Fullscreen)
   else if Id = mnAbove then SetAbove(C, not C.Above)
   else if Id = mnShade then SetShaded(C, not C.Shaded)
+  else if Id = mnNoTitle then
+  begin
+    { the user's choice wins over whatever the app asks for from now on }
+    if C.Decorated then C.DecorUser := 2 else C.DecorUser := 1;
+    SetDecorated(C, C.DecorUser = 1);
+  end
   else if Id = mnBelow then SetBelow(C, not C.Below)
   else if Id = mnSticky then
   begin
@@ -2176,7 +2189,9 @@ begin
     Repaint(C, False);
   end
   else if Ev.atom = aMotif then
-    SetDecorated(C, WantsDecorations(C.Win))
+  begin
+    if C.DecorUser = 0 then SetDecorated(C, WantsDecorations(C.Win));
+  end
   else if (Ev.atom = XA_WM_NORMAL_HINTS) or (Ev.atom = XA_WM_HINTS) or (Ev.atom = aProtocols) or
           (Ev.atom = XA_WM_TRANSIENT_FOR) then
     ReadHints(C);

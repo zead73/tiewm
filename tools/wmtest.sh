@@ -484,7 +484,7 @@ newwin ot -t "Other" -w 300 -h 200 -c 227733 -s 300 -p 100,500; OT=$LAST_ID
 "$XDO" keydown Alt_L key space keyup Alt_L; sec 0.5; "$XDO" key Down key Down key Down key Down key Down key Down key Return; sec 0.8
 [ "$(deskof "$MN")" = "0" ]; check "menu: and toggles it back to the current desktop" $?
 "$XDO" keydown Alt_L key space keyup Alt_L; sec 0.5
-"$XDO" key Down key Down key Down key Down key Down key Down key Down key Down key Down key Return; sec 0.8
+"$XDO" key Down key Down key Down key Down key Down key Down key Down key Down key Down key Down key Return; sec 0.8
 [ "$(deskof "$MN")" = "2" ] && [ "$(viewable "$MN")" = "0" ]; check "menu: Move to Workspace 3 (the current one is disabled and skipped)" $?
 wmctrl -s 0; stop_clients; sec 0.3
 newwin mm -t "Mouse menu" -w 300 -h 200 -c aa5522 -s 120 -p 500,300; MM=$LAST_ID
@@ -613,6 +613,31 @@ menuopen; check "the window menu still opens (Alt+space)" $?
 "$XDO" key Escape; sec 0.4
 "$XDO" keydown Alt_L key F4 keyup Alt_L; sec 0.7
 grep -q WM_DELETE_WINDOW "$TMP/u1.log"; check "Alt+F4 closes it" $?
+stop_clients
+
+echo "== 27. window menu: No titlebar toggle (the user's choice beats the app's own hints)"
+stop_clients
+newwin nt -t "Toggle me" -w 300 -h 200 -c 996600 -s 300 -p 400,300; NT=$LAST_ID
+G0=$(absgeom "$NT")
+"$XDO" keydown Alt_L key space keyup Alt_L; sec 0.5; "$XDO" key Down key Down key Down key Down key Down key Down key Down key Down key Return; sec 0.8
+G1=$(absgeom "$NT")
+xprop -id "$NT" _NET_FRAME_EXTENTS | grep -q "= 0, 0, 0, 0" && [ "$G0" = "$G1" ] && [ "$(frameh "$NT")" = "200" ]; check "menu: No titlebar (8th item) removes the frame and the client does not move ($G0 -> $G1)" $?
+"$XDO" keydown Alt_L key space keyup Alt_L; sec 0.5; "$XDO" key Down key Down key Down key Down key Down key Down key Down key Return; sec 0.8
+G2=$(absgeom "$NT")
+xprop -id "$NT" _NET_FRAME_EXTENTS | grep -q "= $M, $M, $T, $M" && [ "$G0" = "$G2" ]; check "menu: the same entry (now checked; Shade is greyed out so it is the 7th enabled item) brings the titlebar back, client still in place ($G2)" $?
+stop_clients
+newwin top -t "At the top" -w 300 -h 200 -c 669900 -s 300 -p 700,0 -D none; TOP=$LAST_ID
+G=$(absgeom "$TOP"); [ "$(field "$G" y)" -eq 0 ]; check "an undecorated window can sit at the very top (y=0)" $?
+"$XDO" keydown Alt_L key space keyup Alt_L; sec 0.5; "$XDO" key Down key Down key Down key Down key Down key Down key Down key Return; sec 0.8
+G=$(absgeom "$TOP")
+xprop -id "$TOP" _NET_FRAME_EXTENTS | grep -q "= $M, $M, $T, $M" && [ "$(field "$G" y)" -eq "$T" ]; check "turning the titlebar on pushes the window down so the bar is visible (client y=$(field "$G" y), expected $T)" $?
+stop_clients
+newwin ov -t "Override" -w 300 -h 200 -c 006699 -s 300 -p 400,300 -D all -M title,6; OV=$LAST_ID
+"$XDO" keydown Alt_L key space keyup Alt_L; sec 0.5; "$XDO" key Down key Down key Down key Down key Down key Down key Down key Down key Return; sec 0.8
+xprop -id "$OV" _NET_FRAME_EXTENTS | grep -q "= 0, 0, 0, 0"; check "user removed the titlebar of a window that asked for one" $?
+sleep 5
+grep -q 'motif hints changed to title' "$TMP/ov.log" && xprop -id "$OV" _NET_FRAME_EXTENTS | grep -q "= 0, 0, 0, 0"; check "a later hint change from the app does not bring it back (the user's choice wins)" $?
+grep -q 'titlebar off' "$TMP/tiewm.log"; check "the log records the toggle" $?
 stop_clients
 
 stop_wm
