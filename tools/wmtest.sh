@@ -82,6 +82,7 @@ EX=$(( (1280 - (400+2*M)) / 2 + M )); EY=$(( (800 - (300+T+M)) / 2 + T ))
 [ "$(field "$GA" x)" = "$EX" ] && [ "$(field "$GA" y)" = "$EY" ]; check "centred: expected client at $EX,$EY got $GA" $?
 [ "$(hexnorm "$(active)")" = "$(hexnorm "$A")" ]; check "new window becomes _NET_ACTIVE_WINDOW" $?
 xprop -id "$A" _NET_FRAME_EXTENTS | grep -q "= $M, $M, $T, $M"; check "_NET_FRAME_EXTENTS set" $?
+xprop -id "$A" _NET_WM_DESKTOP | grep -q "= 0"; check "_NET_WM_DESKTOP = 0 (lxqt-panel taskbar needs it to list the window)" $?
 wmctrl -l | grep -q "Window A"; check "wmctrl -l lists it via _NET_CLIENT_LIST" $?
 
 echo "== 5. click on a second window: focus switches and the app still gets the click"

@@ -67,7 +67,7 @@ type
     aSupported, aNetWmName, aActive, aClientList, aClientListStk, aFrameExtents: TAtom;
     aNetWmState, aMaxVert, aMaxHorz, aCloseWindow, aWindowType: TAtom;
     aTypeDock, aTypeDesktop, aTypeMenu, aTypeDropdown, aTypePopup, aTypeTooltip, aTypeNotification, aTypeCombo, aTypeDnd: TAtom;
-    aHidden, aFullscreen: TAtom;
+    aHidden, aFullscreen, aWmDesktop: TAtom;
     aStrut, aStrutPartial, aNumDesktops, aCurDesktop, aWorkarea, aDeskGeom, aDeskViewport, aSupportingCheck: TAtom;
     { drag state }
     FDrag: TDragKind;
@@ -238,6 +238,7 @@ begin
   aTypeNotification := A('_NET_WM_WINDOW_TYPE_NOTIFICATION'); aTypeCombo := A('_NET_WM_WINDOW_TYPE_COMBO');
   aTypeDnd := A('_NET_WM_WINDOW_TYPE_DND');
   aHidden := A('_NET_WM_STATE_HIDDEN'); aFullscreen := A('_NET_WM_STATE_FULLSCREEN');
+  aWmDesktop := A('_NET_WM_DESKTOP');
   aStrut := A('_NET_WM_STRUT'); aStrutPartial := A('_NET_WM_STRUT_PARTIAL');
   aNumDesktops := A('_NET_NUMBER_OF_DESKTOPS'); aCurDesktop := A('_NET_CURRENT_DESKTOP');
   aWorkarea := A('_NET_WORKAREA'); aDeskGeom := A('_NET_DESKTOP_GEOMETRY');
@@ -432,7 +433,7 @@ procedure TWM.SetupEwmh;
 var
   Sup: array of culong;
   Name: string;
-  Atoms: array[0..15] of TAtom;
+  Atoms: array[0..16] of TAtom;
   I: Integer;
 begin
   FCheckWin := XCreateSimpleWindow(FDpy, FRoot, -100, -100, 1, 1, 0, 0, 0);
@@ -444,7 +445,7 @@ begin
   Atoms[4] := aFrameExtents; Atoms[5] := aNetWmState; Atoms[6] := aMaxVert; Atoms[7] := aMaxHorz;
   Atoms[8] := aCloseWindow; Atoms[9] := aWindowType; Atoms[10] := aSupportingCheck;
   Atoms[11] := aNumDesktops; Atoms[12] := aCurDesktop; Atoms[13] := aWorkarea;
-  Atoms[14] := aHidden; Atoms[15] := aFullscreen;
+  Atoms[14] := aHidden; Atoms[15] := aFullscreen; Atoms[16] := aWmDesktop;
   SetLength(Sup, Length(Atoms));
   for I := 0 to High(Atoms) do Sup[I] := Atoms[I];
   SetCards(FRoot, aSupported, Sup);
@@ -782,6 +783,7 @@ begin
   XMapWindow(FDpy, Win);
   XMapWindow(FDpy, C.Frame);
   SetWmState(C, NormalState);
+  SetCards(Win, aWmDesktop, [0]);   { single desktop for now }
   SetCards(Win, aFrameExtents, [culong(M.LeftW), culong(M.RightW), culong(M.TitleH), culong(M.BottomH)]);
   SendConfigure(C);
   UpdateClientList;
