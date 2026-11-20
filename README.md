@@ -33,7 +33,7 @@ Run it ONLY on a display you mean to manage: `DISPLAY=:99 ./tiewm` (it refuses t
 the root; `TIEWM_THEME`, `TIEWM_FONT`, `TIEWM_DEBUG=1` are the only settings so far). SIGTERM/SIGINT hand all
 windows back to the root cleanly.
 
-Works (154 scenario checks, `tools/wmtest.sh`, scratch Xvfb on :99 only): manage/adopt/unmanage, centred
+Works (173 scenario checks, `tools/wmtest.sh`, scratch Xvfb on :99 only): manage/adopt/unmanage, centred
 placement (honours USPosition), themed frames with shape, click-to-focus with click replay to the app,
 raise on click, active/inactive repaint, title updates, titlebar drag and Alt+drag (also with Num/Caps Lock),
 Alt+right-drag resize, edge/corner resize with min-size and size-increment hints, close button
@@ -54,6 +54,12 @@ startup line (version, display, theme, desktops), which config was used and its 
 key reloads, shutdown, and any exception raised inside an event handler (which is caught: one buggy handler cannot take the
 session down). Lines are flushed immediately; a file over 512 KiB is rotated to `.1` at start; an unwritable log is ignored.
 `TIEWM_LOG=FILE|none` and `TIEWM_DEBUG=1` (debug level + mirror to stderr) override.
+
+Decorations (`_MOTIF_WM_HINTS`): a window that asks for no decorations (decorations field 0, or ALL minus TITLE, or
+anything without TITLE: "border only" counts as none) gets no frame graphics at all: the frame is exactly the client,
+`_NET_FRAME_EXTENTS` = 0, and nothing is drawn. Changes of the hint while the window is open are followed (titlebar
+appears/disappears, the client stays where it is). Undecorated windows still move with Alt+drag, resize with
+Alt+right-drag or Alt+F8, maximize/fullscreen/close/menu (Alt+space) as usual; Shade is disabled for them.
 
 Shade: the S button, the window menu, `_NET_WM_STATE_SHADED` (wmctrl -b add,shaded) or the `shade` key action roll a window up
 to its titlebar (frame resized, client stays mapped but clipped and still gets its real size in ConfigureNotify; no resize
@@ -107,9 +113,8 @@ unless every window has `_NET_WM_DESKTOP`.
 
 - **Remove the titlebar of a window that already draws its own** (Electron/CSD apps such as the Claude desktop app),
   and remember the choice in the config file.
-  1. Honour `_MOTIF_WM_HINTS` (decorations = 0) automatically: the Claude desktop window already asks for no
-     decorations (`_MOTIF_WM_HINTS = 0x2, 0, 0, 0, 0`, `WM_CLASS = com.anthropic.claude`) but tiewm ignores it and
-     frames it anyway.
+  1. ~~Honour `_MOTIF_WM_HINTS` (decorations = 0) automatically~~ **done**: the Claude desktop window asks for no
+     decorations (`_MOTIF_WM_HINTS = 0x2, 0, 0, 0, 0`, `WM_CLASS = com.anthropic.claude`) and now gets none.
   2. A manual toggle for apps that do not ask: a "No titlebar" entry in the window menu (menu only, no key action).
   3. Persist it per application in the config file, matched by `WM_CLASS`, e.g. a `[windows]` section with
      `com.anthropic.claude = no_titlebar` (and an `ignore`/`titlebar` override for the opposite case). The menu toggle

@@ -12,7 +12,7 @@ unit twwm;
 interface
 
 uses
-  ctypes, SysUtils, Classes, BaseUnix, x, xlib, xutil, xatom, cursorfont, keysym,
+  ctypes, SysUtils, StrUtils, Classes, BaseUnix, x, xlib, xutil, xatom, cursorfont, keysym,
   twimage, twtheme, twxft, twxdraw, twxshape, twconfig, twlog, twmenu;
 
 type
@@ -24,6 +24,7 @@ type
     InputHint, HasDelete, HasTakeFocus: Boolean;
     MinW, MinH, MaxW, MaxH, IncW, IncH, BaseW, BaseH: Integer;   { client sizes }
     Maximized, Fullscreen, Iconic, Above, Below, Shaded: Boolean;
+    Decorated: Boolean;           { False: no frame graphics at all (the app draws its own) }
     UnshadeH: Integer;            { frame height to return to when unshaded }
     Desktop: Integer;             { 0..N-1, or -1 = sticky (all desktops) }
     Transient: TWindow;           { WM_TRANSIENT_FOR, 0 if none }
@@ -73,7 +74,7 @@ type
     aSupported, aNetWmName, aActive, aClientList, aClientListStk, aFrameExtents: TAtom;
     aNetWmState, aMaxVert, aMaxHorz, aCloseWindow, aWindowType: TAtom;
     aTypeDock, aTypeDesktop, aTypeMenu, aTypeDropdown, aTypePopup, aTypeTooltip, aTypeNotification, aTypeCombo, aTypeDnd: TAtom;
-    aHidden, aFullscreen, aWmDesktop, aBelow, aAbove, aShaded, aSticky, aDeskNames: TAtom;
+    aHidden, aFullscreen, aWmDesktop, aBelow, aAbove, aShaded, aSticky, aDeskNames, aMotif: TAtom;
     aStrut, aStrutPartial, aNumDesktops, aCurDesktop, aWorkarea, aDeskGeom, aDeskViewport, aSupportingCheck: TAtom;
     { drag state }
     FDrag: TDragKind;
@@ -140,6 +141,8 @@ type
     procedure SetAbove(C: TClient; On: Boolean);
     procedure SetBelow(C: TClient; On: Boolean);
     procedure SetShaded(C: TClient; On: Boolean);
+    function WantsDecorations(Win: TWindow): Boolean;
+    procedure SetDecorated(C: TClient; On: Boolean);
     function OptsFor(C: TClient): TFrameOpts;
     procedure StartKb(Mode: TKbMode; ATime: culong);
     procedure EndKb(Commit: Boolean);
@@ -317,6 +320,7 @@ begin
   aBelow := A('_NET_WM_STATE_BELOW');
   aAbove := A('_NET_WM_STATE_ABOVE');
   aShaded := A('_NET_WM_STATE_SHADED');
+  aMotif := A('_MOTIF_WM_HINTS');
   aSticky := A('_NET_WM_STATE_STICKY');
   aDeskNames := A('_NET_DESKTOP_NAMES');
   aStrut := A('_NET_WM_STRUT'); aStrutPartial := A('_NET_WM_STRUT_PARTIAL');
@@ -800,7 +804,7 @@ function TWM.Ext(C: TClient): TExt;
 var
   M: TThemeMetrics;
 begin
-  if C.Fullscreen then
+  if C.Fullscreen or not C.Decorated then
   begin
     Result.L := 0; Result.R := 0; Result.T := 0; Result.B := 0;
   end
@@ -870,7 +874,7 @@ var
   Pm, Mask: TPixmap;
   TX, BY: Integer;
 begin
-  if C.Fullscreen then Exit;
+  if C.Fullscreen or not C.Decorated then Exit;
   Act := C = FFocused;
   if (not Force) and C.Painted and (C.PaintedActive = Act) and (C.PaintedW = C.W) and
      (C.PaintedH = C.H) and (C.PaintedName = C.Name) then Exit;
@@ -913,14 +917,14 @@ procedure TWM.Place(C: TClient; HasPos: Boolean; CX, CY: Integer);
 var
   AX, AY, AW, AH: Integer;
   P: TClient;
-  M: TThemeMetrics;
+  E: TExt;
 begin
-  M := FTheme.Metrics;
+  E := Ext(C);
   WorkArea(AX, AY, AW, AH);
   if HasPos then
   begin
-    C.X := CX - M.LeftW;
-    C.Y := CY - M.TitleH;
+    C.X := CX - E.L;
+    C.Y := CY - E.T;
   end
   else
   begin
@@ -945,7 +949,7 @@ procedure TWM.Manage(Win: TWindow; Startup: Boolean);
 var
   Atr: TXWindowAttributes;
   C: TClient;
-  M: TThemeMetrics;
+  E: TExt;
   Sz: TXSizeHints;
   Supplied: clong;
   HasPos: Boolean;
@@ -982,12 +986,13 @@ begin
     Restack;
     Exit;
   end;
-  M := FTheme.Metrics;
   WasViewable := Atr.map_state = IsViewable;
   C := TClient.Create;
   C.Win := Win;
   C.Name := ReadName(Win);
   ReadHints(C);
+  C.Decorated := WantsDecorations(Win);
+  E := Ext(C);
   C.Desktop := ReadDesktopProp(Win);
   if C.Desktop = -2 then
   begin
@@ -996,16 +1001,16 @@ begin
   end;
   CW := Atr.width; CH := Atr.height;
   ConstrainClient(C, CW, CH);
-  C.W := CW + M.LeftW + M.RightW;
-  C.H := CH + M.TitleH + M.BottomH;
+  C.W := CW + E.L + E.R;
+  C.H := CH + E.T + E.B;
   FillChar(Sz, SizeOf(Sz), 0);
   HasPos := False;
   if XGetWMNormalHints(FDpy, Win, @Sz, @Supplied) <> 0 then
     HasPos := (Sz.flags and (USPosition or PPosition)) <> 0;
   if Startup then
   begin
-    C.X := Atr.x - M.LeftW;
-    C.Y := Atr.y - M.TitleH;
+    C.X := Atr.x - E.L;
+    C.Y := Atr.y - E.T;
     if C.Y < 0 then C.Y := 0;
   end
   else
@@ -1016,7 +1021,7 @@ begin
   XSetWindowBorderWidth(FDpy, Win, 0);
   XAddToSaveSet(FDpy, Win);
   if WasViewable then Inc(C.IgnoreUnmap);   { reparenting a mapped window unmaps it }
-  XReparentWindow(FDpy, Win, C.Frame, M.LeftW, M.TitleH);
+  XReparentWindow(FDpy, Win, C.Frame, E.L, E.T);
   XResizeWindow(FDpy, Win, CW, CH);
   SetA.event_mask := PropertyChangeMask or FocusChangeMask;
   XChangeWindowAttributes(FDpy, Win, CWEventMask, @SetA);
@@ -1031,10 +1036,11 @@ begin
   SetWmState(C, NormalState);
   SetDesktopProp(C);
   UpdateNetState(C);
-  SetCards(Win, aFrameExtents, [culong(M.LeftW), culong(M.RightW), culong(M.TitleH), culong(M.BottomH)]);
+  SetCards(Win, aFrameExtents, [culong(E.L), culong(E.R), culong(E.T), culong(E.B)]);
   SendConfigure(C);
   UpdateClientList;
-  Log(Format('managed 0x%x "%s" frame 0x%x at %d,%d %dx%d', [Win, C.Name, C.Frame, C.X, C.Y, C.W, C.H]));
+  Log(Format('managed 0x%x "%s" frame 0x%x at %d,%d %dx%d%s', [Win, C.Name, C.Frame, C.X, C.Y, C.W, C.H,
+    IfThen(C.Decorated, '', ' (no decorations)')]));
   if (not Startup) and OnDesk(C) then FocusClient(C, CurrentTime);
 end;
 
@@ -1230,6 +1236,82 @@ begin
   XDeleteProperty(FDpy, FRoot, aActive);
 end;
 
+{ _MOTIF_WM_HINTS: flags, functions, decorations, input_mode, status. When the decorations
+  field is present: with MWM_DECOR_ALL set, the listed bits are taken away from "all";
+  without it, only the listed bits are wanted. No title bar wanted = the app draws its own
+  frame, so we draw none (a "border only" request is treated the same). }
+function TWM.WantsDecorations(Win: TWindow): Boolean;
+const
+  MWM_HINTS_DECORATIONS = 2;
+  MWM_DECOR_ALL = 1;
+  MWM_DECOR_TITLE = 8;
+var
+  D: PByte;
+  N: culong;
+  Flags, Decor: culong;
+begin
+  Result := True;
+  D := GetProp(Win, aMotif, aMotif, N);
+  if D = nil then Exit;
+  if N >= 3 then
+  begin
+    Flags := PCULong(D)[0];
+    Decor := PCULong(D)[2];
+    if (Flags and MWM_HINTS_DECORATIONS) <> 0 then
+    begin
+      if (Decor and MWM_DECOR_ALL) <> 0 then Result := (Decor and MWM_DECOR_TITLE) = 0
+      else Result := (Decor and MWM_DECOR_TITLE) <> 0;
+    end;
+  end;
+  XFree(D);
+end;
+
+{ Adds or removes the frame graphics while the client stays exactly where it is. }
+procedure TWM.SetDecorated(C: TClient; On: Boolean);
+var
+  OldE, E: TExt;
+  CX, CY, CW, CH, AX, AY, AW, AH: Integer;
+begin
+  if C.Decorated = On then Exit;
+  if C.Fullscreen then
+  begin
+    C.Decorated := On;      { shows when fullscreen ends }
+    Exit;
+  end;
+  if C.Shaded then SetShaded(C, False);
+  OldE := Ext(C);
+  CX := C.X + OldE.L;
+  CY := C.Y + OldE.T;
+  ClientSizeOf(C, CW, CH);
+  C.Decorated := On;
+  E := Ext(C);
+  if C.Maximized then
+  begin
+    WorkArea(AX, AY, AW, AH);
+    C.X := AX; C.Y := AY; C.W := AW; C.H := AH;
+    ClientSizeOf(C, CW, CH);
+  end
+  else
+  begin
+    C.X := CX - E.L;
+    C.Y := CY - E.T;
+    C.W := CW + E.L + E.R;
+    C.H := CH + E.T + E.B;
+  end;
+  XMoveResizeWindow(FDpy, C.Frame, C.X, C.Y, C.W, C.H);
+  XMoveResizeWindow(FDpy, C.Win, E.L, E.T, CW, CH);
+  if On then
+    Repaint(C, True)
+  else
+  begin
+    C.Painted := False;
+    XShapeCombineMask(FDpy, C.Frame, ShapeBounding, 0, 0, None, ShapeSet);   { plain rectangle }
+  end;
+  SetFrameExtentsProp(C);
+  SendConfigure(C);
+  Log(Format('0x%x "%s": titlebar %s', [C.Win, C.Name, IfThen(On, 'on', 'off')]));
+end;
+
 function TWM.OptsFor(C: TClient): TFrameOpts;
 begin
   Result := FOpts;
@@ -1243,7 +1325,7 @@ begin
   if C.Shaded = On then Exit;
   if On then
   begin
-    if C.Maximized or C.Fullscreen or C.Iconic then Exit;
+    if C.Maximized or C.Fullscreen or C.Iconic or not C.Decorated then Exit;
     C.UnshadeH := C.H;
     C.Shaded := True;
     C.H := FTheme.Metrics.TitleH;
@@ -1359,7 +1441,7 @@ begin
     C.X := NX; C.Y := NY; C.W := NW; C.H := NH;
     ClientSizeOf(C, CW, CH);
     XMoveResizeWindow(FDpy, C.Frame, NX, NY, NW, NH);
-    XMoveResizeWindow(FDpy, C.Win, M.LeftW, M.TitleH, CW, CH);
+    XMoveResizeWindow(FDpy, C.Win, Ext(C).L, Ext(C).T, CW, CH);
     Repaint(C, True);
   end;
   SetFrameExtentsProp(C);
@@ -1395,7 +1477,7 @@ begin
   FMenu.Add(mnAbove, 'Always on top', C.Above, True);
   FMenu.Add(mnBelow, 'Always below', C.Below, True);
   FMenu.Add(mnSticky, 'On all workspaces', C.Desktop < 0, True);
-  FMenu.Add(mnShade, 'Shade', C.Shaded, not (C.Maximized or C.Fullscreen));
+  FMenu.Add(mnShade, 'Shade', C.Shaded, C.Decorated and not (C.Maximized or C.Fullscreen));
   FMenu.AddSeparator;
   for K := 0 to FNumDesk - 1 do
     FMenu.Add(mnDesktop + K, 'Move to Workspace ' + IntToStr(K + 1), C.Desktop = K, C.Desktop <> K);
@@ -1692,12 +1774,12 @@ procedure TWM.DoMotion(XRoot, YRoot: Integer);
 var
   DX, DY, NX, NY, NW, NH, CW, CH, RightEdge, BottomEdge: Integer;
   C: TClient;
-  M: TThemeMetrics;
+  E: TExt;
   Resizing: Boolean;
 begin
   C := FDragClient;
   if C = nil then Exit;
-  M := FTheme.Metrics;
+  E := Ext(C);
   DX := XRoot - FDragPX;
   DY := YRoot - FDragPY;
   if FDrag = dgMove then
@@ -1715,11 +1797,11 @@ begin
   if FDragHit in [hkS, hkSE, hkSW] then begin NH := FDragH + DY; Resizing := True; end;
   if FDragHit in [hkN, hkNE, hkNW] then begin NH := FDragH - DY; Resizing := True; end;
   if not Resizing then Exit;
-  CW := NW - M.LeftW - M.RightW;
-  CH := NH - M.TitleH - M.BottomH;
+  CW := NW - E.L - E.R;
+  CH := NH - E.T - E.B;
   ConstrainClient(C, CW, CH);
-  NW := CW + M.LeftW + M.RightW;
-  NH := CH + M.TitleH + M.BottomH;
+  NW := CW + E.L + E.R;
+  NH := CH + E.T + E.B;
   RightEdge := FDragX + FDragW;
   BottomEdge := FDragY + FDragH;
   { edges that are dragged from the top/left keep the opposite side fixed }
@@ -2093,6 +2175,8 @@ begin
     C.Name := ReadName(C.Win);
     Repaint(C, False);
   end
+  else if Ev.atom = aMotif then
+    SetDecorated(C, WantsDecorations(C.Win))
   else if (Ev.atom = XA_WM_NORMAL_HINTS) or (Ev.atom = XA_WM_HINTS) or (Ev.atom = aProtocols) or
           (Ev.atom = XA_WM_TRANSIENT_FOR) then
     ReadHints(C);

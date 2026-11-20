@@ -564,6 +564,57 @@ xprop -id "$BW" _NET_WM_STATE | grep -q BELOW && ! xprop -id "$BW" _NET_WM_STATE
 ! xprop -id "$BW" _NET_WM_STATE | grep -q BELOW; check "window menu: and toggles it off" $?
 stop_clients
 
+echo "== 26. _MOTIF_WM_HINTS: windows that ask for no decorations get none (no titlebar, no borders)"
+stop_clients
+newwin nd -t "No decorations" -w 300 -h 200 -c cc6600 -s 300 -p 400,300 -D none; ND=$LAST_ID
+xprop -id "$ND" _NET_FRAME_EXTENTS | grep -q "= 0, 0, 0, 0"; check "decorations = 0: _NET_FRAME_EXTENTS are zero" $?
+G=$(absgeom "$ND"); [ "$(field "$G" x)" -eq 400 ] && [ "$(field "$G" y)" -eq 300 ] && [ "$(frameh "$ND")" = "200" ]; check "the frame is exactly the client ($G, frame height $(frameh "$ND"))" $?
+import -window root "$TMP/nd.png" 2>/dev/null
+[ "$(magick "$TMP/nd.png" -format '%[hex:p{410,299}]' info:)" = "000000" ] && [ "$(magick "$TMP/nd.png" -format '%[hex:p{410,300}]' info:)" = "CC6600" ]; check "nothing is drawn around the client (pixel above it is the bare root)" $?
+grep -q '(no decorations)' "$TMP/tiewm.log"; check "the log says it was managed without decorations" $?
+newwin dall -t "All decorations" -w 300 -h 200 -c 0066cc -s 300 -p 800,300 -D all; DALL=$LAST_ID
+xprop -id "$DALL" _NET_FRAME_EXTENTS | grep -q "= $M, $M, $T, $M"; check "decorations = ALL: normal frame" $?
+newwin dnt -t "All but title" -w 300 -h 200 -c 66cc00 -s 300 -p 100,500 -D notitle; DNT=$LAST_ID
+xprop -id "$DNT" _NET_FRAME_EXTENTS | grep -q "= 0, 0, 0, 0"; check "ALL minus TITLE: no frame" $?
+newwin dti -t "Title only" -w 300 -h 200 -c cc0066 -s 300 -p 500,500 -D title; DTI=$LAST_ID
+xprop -id "$DTI" _NET_FRAME_EXTENTS | grep -q "= $M, $M, $T, $M"; check "TITLE requested: normal frame" $?
+newwin dbo -t "Border only" -w 200 -h 100 -c 00cccc -s 300 -p 1000,500 -D border; DBO=$LAST_ID
+xprop -id "$DBO" _NET_FRAME_EXTENTS | grep -q "= 0, 0, 0, 0"; check "BORDER only (no title): treated as undecorated" $?
+stop_clients
+newwin ndd -t "Dynamic on" -w 300 -h 200 -c aa66cc -s 300 -p 400,300 -D all -M none,2; NDD=$LAST_ID
+G0=$(absgeom "$NDD")
+xprop -id "$NDD" _NET_FRAME_EXTENTS | grep -q "= $M, $M, $T, $M"; check "starts decorated" $?
+sleep 2.6
+G1=$(absgeom "$NDD")
+xprop -id "$NDD" _NET_FRAME_EXTENTS | grep -q "= 0, 0, 0, 0" && [ "$G0" = "$G1" ]; check "hints changed to none later: titlebar goes away and the client does not move ($G0 -> $G1)" $?
+stop_clients
+newwin ndn -t "Dynamic off" -w 300 -h 200 -c 66aacc -s 300 -p 400,300 -D none -M all,2; NDN=$LAST_ID
+G0=$(absgeom "$NDN"); sleep 2.6; G1=$(absgeom "$NDN")
+xprop -id "$NDN" _NET_FRAME_EXTENTS | grep -q "= $M, $M, $T, $M" && [ "$G0" = "$G1" ]; check "hints changed to all later: titlebar comes back, client stays put ($G0 -> $G1)" $?
+stop_clients
+newwin u1 -t "Undecorated" -w 300 -h 200 -c cc6600 -s 300 -p 400,300 -D none; U1=$LAST_ID
+newwin u2 -t "Normal" -w 300 -h 200 -c 0066cc -s 300 -p 800,300; U2=$LAST_ID
+"$XDO" move 450 350 click 1; sec 0.5
+[ "$(hexnorm "$(active)")" = "$(hexnorm "$U1")" ] && grep -q 'ButtonPress x=50 y=50' "$TMP/u1.log"; check "clicking an undecorated window focuses it and the click reaches the app" $?
+G0=$(absgeom "$U1"); X0=$(field "$G0" x); Y0=$(field "$G0" y)
+"$XDO" keydown Alt_L drag $((X0+50)) $((Y0+50)) $((X0+150)) $((Y0+100)) keyup Alt_L; sec 0.6
+G=$(absgeom "$U1"); [ "$(field "$G" x)" -eq $((X0+100)) ] && [ "$(field "$G" y)" -eq $((Y0+50)) ]; check "Alt+drag moves an undecorated window ($G)" $?
+"$XDO" keydown Super_L key Return keyup Super_L; sec 0.8
+G=$(absgeom "$U1"); [ "$(field "$G" x)" -eq 0 ] && [ "$(field "$G" y)" -eq 0 ] && [ "$(field "$G" w)" -eq 1280 ] && [ "$(field "$G" h)" -eq 800 ]; check "maximize fills the work area exactly, no border ($G)" $?
+"$XDO" keydown Super_L key Return keyup Super_L; sec 0.8
+G=$(absgeom "$U1"); [ "$(field "$G" w)" -eq 300 ] && [ "$(field "$G" x)" -eq $((X0+100)) ]; check "and restores ($G)" $?
+G0=$(absgeom "$U1")
+wmctrl -i -r "$U1" -b add,fullscreen; sec 0.7
+G=$(absgeom "$U1"); [ "$(field "$G" w)" -eq 1280 ] && [ "$(field "$G" h)" -eq 800 ]; check "fullscreen works on an undecorated window ($G)" $?
+wmctrl -i -r "$U1" -b remove,fullscreen; sec 0.7
+G=$(absgeom "$U1"); [ "$G" = "$G0" ] && xprop -id "$U1" _NET_FRAME_EXTENTS | grep -q "= 0, 0, 0, 0"; check "leaving fullscreen returns it undecorated at the same place ($G)" $?
+"$XDO" keydown Alt_L key space keyup Alt_L; sec 0.6
+menuopen; check "the window menu still opens (Alt+space)" $?
+"$XDO" key Escape; sec 0.4
+"$XDO" keydown Alt_L key F4 keyup Alt_L; sec 0.7
+grep -q WM_DELETE_WINDOW "$TMP/u1.log"; check "Alt+F4 closes it" $?
+stop_clients
+
 stop_wm
 
 echo

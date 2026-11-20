@@ -5,6 +5,8 @@ program testwin;
     testwin [-t title] [-w width] [-h height] [-c rrggbb] [-s seconds]
             [-m minw,minh] [-p x,y]   program-specified position (USPosition)
             [-T newtitle,afterseconds]  change the title later
+            [-D none|all|notitle|border|title]  set _MOTIF_WM_HINTS decorations before mapping
+            [-M mode,seconds]         change _MOTIF_WM_HINTS later (same modes)
             [-y desktop|dock|dockbelow]  set _NET_WM_WINDOW_TYPE (dockbelow also sets STATE_BELOW)
             [-P 0xID]                 mark as transient for that window
             [-i seconds]              iconify itself (XIconifyWindow) after N seconds
@@ -25,6 +27,10 @@ var
   ParentId: QWord;
   Iconified: Boolean;
   WinType: string;
+  MotifMode, MotifLater: string;
+  MotifAfter: Integer;
+  MotifChanged: Boolean;
+  AMotif: TAtom;
   AType, ATypeDock, AState, ABelow: TAtom;
   Col: LongWord;
   HavePos, NoDelete: Boolean;
@@ -42,10 +48,27 @@ begin
   Flush(Output);
 end;
 
+procedure SetMotif(Dpy: PDisplay; Win: TWindow; const Mode: string);
+var
+  V: array[0..4] of culong;
+  A: TAtom;
+begin
+  V[0] := 2; V[1] := 0; V[3] := 0; V[4] := 0;
+  if Mode = 'none' then V[2] := 0
+  else if Mode = 'all' then V[2] := 1
+  else if Mode = 'notitle' then V[2] := 1 or 8
+  else if Mode = 'border' then V[2] := 2
+  else if Mode = 'title' then V[2] := 8
+  else Exit;
+  A := XInternAtom(Dpy, '_MOTIF_WM_HINTS', 0);
+  XChangeProperty(Dpy, Win, A, A, 32, PropModeReplace, PByte(@V[0]), 5);
+end;
+
 begin
   Title := 'testwin'; W := 300; H := 200; Col := $FF00FF; Secs := 30;
   MinW := 0; MinH := 0; HavePos := False; NoDelete := False; NewTitle := ''; ChangeAfter := 0;
   IconifyAfter := -1; ParentId := 0; Iconified := False; WinType := '';
+  MotifMode := ''; MotifLater := ''; MotifAfter := 0; MotifChanged := False;
   I := 1;
   while I <= ParamCount do
   begin
@@ -69,6 +92,11 @@ begin
         HavePos := True;
       end
       else if Opt = '-y' then WinType := S
+      else if Opt = '-D' then MotifMode := S
+      else if Opt = '-M' then
+      begin
+        P := Pos(',', S); MotifLater := Copy(S, 1, P - 1); MotifAfter := StrToInt(Copy(S, P + 1, 99));
+      end
       else if Opt = '-P' then ParentId := StrToQWord(S)
       else if Opt = '-i' then IconifyAfter := StrToInt(S)
       else if Opt = '-T' then
@@ -96,6 +124,7 @@ begin
   WmProtocols := XInternAtom(Dpy, 'WM_PROTOCOLS', 0);
   if not NoDelete then XSetWMProtocols(Dpy, Win, @WmDelete, 1);
   if ParentId <> 0 then XSetTransientForHint(Dpy, Win, ParentId);
+  if MotifMode <> '' then SetMotif(Dpy, Win, MotifMode);
   if WinType <> '' then
   begin
     AType := XInternAtom(Dpy, '_NET_WM_WINDOW_TYPE', 0);
@@ -125,6 +154,13 @@ begin
       XFlush(Dpy);
       Changed := True;
       Say('title changed to ' + NewTitle);
+    end;
+    if (MotifLater <> '') and (not MotifChanged) and (Now_ - T0 >= MotifAfter) then
+    begin
+      SetMotif(Dpy, Win, MotifLater);
+      XFlush(Dpy);
+      MotifChanged := True;
+      Say('motif hints changed to ' + MotifLater);
     end;
     if (IconifyAfter >= 0) and (not Iconified) and (Now_ - T0 >= IconifyAfter) then
     begin
