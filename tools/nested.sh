@@ -16,7 +16,7 @@ start)
   # -no-host-grab: do not steal the real keyboard/pointer from the live session
   Xephyr "$D" -screen "$SIZE" -title "tiewm nested test" -no-host-grab >"$N/xephyr.log" 2>&1 &
   echo $! >"$N/xephyr.pid"; sleep 1.5
-  DISPLAY=$D TIEWM_CONFIG="${TIEWM_CONFIG:-$N/none.conf}" TIEWM_DEBUG=1 "$ROOT/tiewm" >"$N/wm.log" 2>&1 &
+  DISPLAY=$D TIEWM_CONFIG="${TIEWM_CONFIG:-$N/none.conf}" TIEWM_LOG="$N/tiewm.log" TIEWM_DEBUG=1 "$ROOT/tiewm" >"$N/wm.log" 2>&1 &
   echo $! >"$N/tiewm.pid"; sleep 1
   ( unset WAYLAND_DISPLAY; export DISPLAY=$D XDG_SESSION_TYPE=x11 XDG_CONFIG_HOME="$N/cfg" XDG_CACHE_HOME="$N/cache"
     exec setsid dbus-run-session -- bash -c 'lxqt-panel & sleep 2; pcmanfm-qt & qterminal & wait' ) >"$N/apps.log" 2>&1 &

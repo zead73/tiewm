@@ -23,11 +23,11 @@ unit twconfig;
 interface
 
 uses
-  SysUtils, Classes, ctypes, x, xlib, twtheme;
+  SysUtils, Classes, ctypes, x, xlib, twtheme, twlog;
 
 type
   TKeyAction = (kaClose, kaCycle, kaCycleBack, kaMaximize, kaIconify, kaFullscreen,
-    kaDeskLeft, kaDeskRight, kaMoveLeft, kaMoveRight, kaGotoDesk, kaMoveToDesk);
+    kaDeskLeft, kaDeskRight, kaMoveLeft, kaMoveRight, kaWindowMenu, kaGotoDesk, kaMoveToDesk);
 
   TKeyBinding = record
     Sym: TKeySym;
@@ -39,13 +39,15 @@ type
   TKeyBindings = array of TKeyBinding;
 
   TConfig = record
-    Theme, TitleFont, ButtonLayout, TitleAlign: string;
+    Theme, TitleFont, MenuFont, ButtonLayout, TitleAlign: string;
     NumDesktops: Integer;
     FontGreyscale: Boolean;
     FontHinting: Integer;          { 0..3, -1 = leave to fontconfig }
     Palette: TThemePalette;
     InactiveText: LongWord;        { $RRGGBB }
     Keys: TKeyBindings;
+    LogFile: string;               { '' = no log file }
+    LogLevel: TLogLevel;
     Path: string;
     Loaded: Boolean;
     Warnings: array of string;
@@ -66,7 +68,7 @@ implementation
 const
   ActionNames: array[TKeyAction] of string = ('close', 'cycle', 'cycle_back', 'maximize',
     'iconify', 'fullscreen', 'desktop_left', 'desktop_right', 'move_left', 'move_right',
-    'goto_desktop_', 'move_to_desktop_');
+    'window_menu', 'goto_desktop_', 'move_to_desktop_');
 
 procedure Warn(var C: TConfig; const Msg: string);
 begin
@@ -109,6 +111,7 @@ function DefaultConfig: TConfig;
 begin
   Result.Theme := 'Daloa';
   Result.TitleFont := 'Sans Bold 11';
+  Result.MenuFont := 'Sans 10';
   Result.ButtonLayout := 'O|SHMC';
   Result.TitleAlign := 'left';
   Result.NumDesktops := 4;
@@ -116,6 +119,8 @@ begin
   Result.FontHinting := 3;
   Result.Palette := DefaultPalette;
   Result.InactiveText := $919190;
+  Result.LogFile := DefaultLogPath;
+  Result.LogLevel := llInfo;
   Result.Path := '';
   Result.Loaded := False;
   SetLength(Result.Keys, 0);
@@ -130,6 +135,7 @@ begin
   AddBinding(Result, kaDeskRight, 0, 'Ctrl+Alt+Right');
   AddBinding(Result, kaMoveLeft, 0, 'Ctrl+Alt+Shift+Left');
   AddBinding(Result, kaMoveRight, 0, 'Ctrl+Alt+Shift+Right');
+  AddBinding(Result, kaWindowMenu, 0, 'Alt+space');
 end;
 
 { ---- key combos ---- }
@@ -356,6 +362,7 @@ begin
   V := Trim(Value);
   if K = 'theme' then C.Theme := V
   else if K = 'title_font' then C.TitleFont := V
+  else if K = 'menu_font' then C.MenuFont := V
   else if K = 'button_layout' then C.ButtonLayout := V
   else if K = 'title_align' then
   begin
@@ -374,6 +381,17 @@ begin
   begin
     if ParseBool(V, B) then C.FontGreyscale := B
     else Warn(C, Format('line %d: font_greyscale must be true or false, not "%s"', [Line, V]));
+  end
+  else if K = 'log_file' then
+  begin
+    if (Length(V) >= 2) and (V[1] = '~') and (V[2] = '/') then
+      V := IncludeTrailingPathDelimiter(GetEnvironmentVariable('HOME')) + Copy(V, 3, MaxInt);
+    C.LogFile := V;
+  end
+  else if K = 'log_level' then
+  begin
+    if not ParseLogLevel(V, C.LogLevel) then
+      Warn(C, Format('line %d: log_level must be off, info or debug, not "%s"', [Line, V]));
   end
   else if K = 'font_hinting' then
   begin
@@ -457,6 +475,12 @@ begin
   if Env <> '' then Result.Theme := Env;
   Env := GetEnvironmentVariable('TIEWM_FONT');
   if Env <> '' then Result.TitleFont := Env;
+  Env := GetEnvironmentVariable('TIEWM_LOG');
+  if Env <> '' then
+  begin
+    if LowerCase(Env) = 'none' then Result.LogLevel := llOff else Result.LogFile := Env;
+  end;
+  if GetEnvironmentVariable('TIEWM_DEBUG') <> '' then Result.LogLevel := llDebug;
   Env := GetEnvironmentVariable('TIEWM_DESKTOPS');
   if Env <> '' then
   begin
@@ -464,6 +488,9 @@ begin
     if (N >= 1) and (N <= 20) then Result.NumDesktops := N;
   end;
 end;
+
+const
+  LogLevelNames: array[TLogLevel] of string = ('off', 'info', 'debug');
 
 function Hex6(C: LongWord): string;
 begin
@@ -479,11 +506,13 @@ var
 begin
   if C.Loaded then Result := 'config file: ' + C.Path + #10
   else Result := 'config file: ' + C.Path + ' (not found, using defaults)' + #10;
-  Result := Result + 'theme = ' + C.Theme + #10 + 'title_font = ' + C.TitleFont + #10 +
+  Result := Result + 'theme = ' + C.Theme + #10 + 'title_font = ' + C.TitleFont + #10 + 'menu_font = ' + C.MenuFont + #10 +
     'button_layout = ' + C.ButtonLayout + #10 + 'title_align = ' + C.TitleAlign + #10 +
     'desktops = ' + IntToStr(C.NumDesktops) + #10 +
     'font_greyscale = ' + BoolToStr(C.FontGreyscale, 'true', 'false') + #10 +
     'font_hinting = ' + IntToStr(C.FontHinting) + #10 +
+    'log_file = ' + C.LogFile + #10 +
+    'log_level = ' + LogLevelNames[C.LogLevel] + #10 +
     'active_color_1 = ' + Hex6(C.Palette.Color1[wsActive]) + #10 +
     'inactive_color_1 = ' + Hex6(C.Palette.Color1[wsInactive]) + #10 +
     'active_color_2 = ' + Hex6(C.Palette.Color2[wsActive]) + #10 +

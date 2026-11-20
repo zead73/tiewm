@@ -6,6 +6,7 @@ program tiewm;
 
     tiewm                        start (reads ~/.config/tiewm/tiewm.conf, see tiewm.conf.example)
     tiewm --check-config [FILE]  parse the config, print what it means and any warnings, exit
+    tiewm --log                  print the path of the log file
     tiewm --version
 
   Environment: TIEWM_CONFIG=FILE, TIEWM_THEME, TIEWM_FONT, TIEWM_DESKTOPS override the config;
@@ -16,10 +17,10 @@ program tiewm;
 {$mode objfpc}{$H+}
 
 uses
-  SysUtils, BaseUnix, ctypes, x, xlib, twconfig, twwm;
+  SysUtils, BaseUnix, ctypes, x, xlib, twlog, twconfig, twwm;
 
 const
-  Version = '0.3';
+  Version = '0.4';
 
 var
   GWm: TWM;
@@ -45,6 +46,12 @@ begin
     WriteLn('tiewm ', Version);
     Halt(0);
   end;
+  if (ParamCount >= 1) and (ParamStr(1) = '--log') then
+  begin
+    { print where the log is }
+    WriteLn(LoadConfig(DefaultConfigPath).LogFile);
+    Halt(0);
+  end;
   if (ParamCount >= 1) and (ParamStr(1) = '--check-config') then
   begin
     if ParamCount >= 2 then Path := ParamStr(2) else Path := DefaultConfigPath;
@@ -64,11 +71,16 @@ begin
     Halt(1);
   end;
   Cfg := LoadConfig(DefaultConfigPath);
+  LogOpen(Cfg.LogFile, Cfg.LogLevel, GetEnvironmentVariable('TIEWM_DEBUG') <> '');
+  LogInfo(Format('tiewm %s starting on %s (theme %s, %d desktops, font "%s")',
+    [Version, GetEnvironmentVariable('DISPLAY'), Cfg.Theme, Cfg.NumDesktops, Cfg.TitleFont]));
+  if Cfg.Loaded then LogInfo('config: ' + Cfg.Path) else LogInfo('config: none (' + Cfg.Path + ' not found), using defaults');
   for I := 0 to High(Cfg.Warnings) do
-    begin
-      WriteLn(StdErr, 'tiewm: ', Cfg.Path, ': ', Cfg.Warnings[I]);
-      Flush(StdErr);
-    end;
+  begin
+    LogInfo('config warning: ' + Cfg.Warnings[I]);
+    WriteLn(StdErr, 'tiewm: ', Cfg.Path, ': ', Cfg.Warnings[I]);
+    Flush(StdErr);
+  end;
   Dpy := XOpenDisplay(nil);
   if Dpy = nil then
   begin
@@ -80,12 +92,14 @@ begin
   except
     on E: Exception do
     begin
+      LogInfo('FATAL: ' + E.Message);
       WriteLn(StdErr, 'tiewm: ', E.Message);
       Halt(1);
     end;
   end;
   if not GWm.Claim then
   begin
+    LogInfo('another window manager is already running, exiting');
     WriteLn(StdErr, 'tiewm: another window manager is already running on ',
       GetEnvironmentVariable('DISPLAY'));
     Halt(1);
@@ -93,7 +107,11 @@ begin
   FpSignal(SIGTERM, @OnSignal);
   FpSignal(SIGINT, @OnSignal);
   FpSignal(SIGHUP, @OnHup);
+  LogInfo('managing the display');
   GWm.Run;
+  LogInfo('shutting down: handing windows back to the root');
   GWm.Shutdown;
   XCloseDisplay(Dpy);
+  LogInfo('bye');
+  LogClose;
 end.

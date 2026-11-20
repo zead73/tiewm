@@ -33,7 +33,7 @@ Run it ONLY on a display you mean to manage: `DISPLAY=:99 ./tiewm` (it refuses t
 the root; `TIEWM_THEME`, `TIEWM_FONT`, `TIEWM_DEBUG=1` are the only settings so far). SIGTERM/SIGINT hand all
 windows back to the root cleanly.
 
-Works (106 scenario checks, `tools/wmtest.sh`, scratch Xvfb on :99 only): manage/adopt/unmanage, centred
+Works (131 scenario checks, `tools/wmtest.sh`, scratch Xvfb on :99 only): manage/adopt/unmanage, centred
 placement (honours USPosition), themed frames with shape, click-to-focus with click replay to the app,
 raise on click, active/inactive repaint, title updates, titlebar drag and Alt+drag (also with Num/Caps Lock),
 Alt+right-drag resize, edge/corner resize with min-size and size-increment hints, close button
@@ -48,6 +48,18 @@ all with Caps/Num Lock; fullscreen (`_NET_WM_STATE_FULLSCREEN`, no decorations, 
 iconify (H button, Alt+F9, `WM_CHANGE_STATE`, `_NET_WM_STATE_HIDDEN`, WM_STATE Iconic, restored by
 `_NET_ACTIVE_WINDOW` / Alt+Tab / the client mapping itself again); `WM_TRANSIENT_FOR` dialogs (centred over the
 parent, kept above it when it is raised, iconified with it, focus returns to the parent when the dialog closes).
+
+Log file (`~/.local/state/tiewm/tiewm.log`, `log_file` / `log_level = off|info|debug`, `tiewm --log` prints the path):
+startup line (version, display, theme, desktops), which config was used and its warnings, every managed/unmanaged window,
+key reloads, shutdown, and any exception raised inside an event handler (which is caught: one buggy handler cannot take the
+session down). Lines are flushed immediately; a file over 512 KiB is rotated to `.1` at start; an unwritable log is ignored.
+`TIEWM_LOG=FILE|none` and `TIEWM_DEBUG=1` (debug level + mirror to stderr) override.
+
+Window menu (`twmenu.pas`, drawn with Xlib/Xft, no toolkit): right-click the titlebar, click the O button, or Alt+space
+(`window_menu`). Minimize, Maximize/Restore, Fullscreen, Always on top, On all workspaces, Move to Workspace N (the
+current one is disabled), Close. Mouse (hover, release to select, click outside to close) and keyboard (Up/Down, Return,
+Escape); the release of the click that opened it is ignored. Always on top is also a real state (`_NET_WM_STATE_ABOVE`):
+above-windows stay over normal ones but under docks and fullscreen windows.
 
 Config file `~/.config/tiewm/tiewm.conf` (`tiewm.conf.example` documents everything; `TIEWM_CONFIG=FILE` picks another):
 theme, title font and alignment, button layout, number of desktops, font hinting, palette colours, and every key binding
@@ -83,7 +95,7 @@ transient/centred/focused, Vivaldi F11 fullscreen on and off. Found and fixed: l
 unless every window has `_NET_WM_DESKTOP`.
 
 Deliberately not done: shade, other key bindings `--replace`,
-multi-monitor, window menu, `_NET_WM_STATE_ABOVE`, modal dialogs, adopting windows that are
+multi-monitor, `_NET_WM_STATE_BELOW` for normal windows, modal dialogs, adopting windows that are
 iconic when the WM starts, button prelight/pressed images, app icon in the menu button, session
 management, gravity/transient-for handling, `_NET_WM_MOVERESIZE`. Not yet run against the real LXQt
 session or lxqt-panel.

@@ -13,7 +13,7 @@ interface
 
 uses
   ctypes, SysUtils, Classes, BaseUnix, x, xlib, xutil, xatom, cursorfont, keysym,
-  twimage, twtheme, twxft, twxdraw, twxshape, twconfig;
+  twimage, twtheme, twxft, twxdraw, twxshape, twconfig, twlog, twmenu;
 
 type
   TClient = class
@@ -23,7 +23,7 @@ type
     IgnoreUnmap: Integer;         { unmaps we caused ourselves }
     InputHint, HasDelete, HasTakeFocus: Boolean;
     MinW, MinH, MaxW, MaxH, IncW, IncH, BaseW, BaseH: Integer;   { client sizes }
-    Maximized, Fullscreen, Iconic: Boolean;
+    Maximized, Fullscreen, Iconic, Above: Boolean;
     Desktop: Integer;             { 0..N-1, or -1 = sticky (all desktops) }
     Transient: TWindow;           { WM_TRANSIENT_FOR, 0 if none }
     SaveX, SaveY, SaveW, SaveH: Integer;   { geometry to return to from maximize/fullscreen }
@@ -71,7 +71,7 @@ type
     aSupported, aNetWmName, aActive, aClientList, aClientListStk, aFrameExtents: TAtom;
     aNetWmState, aMaxVert, aMaxHorz, aCloseWindow, aWindowType: TAtom;
     aTypeDock, aTypeDesktop, aTypeMenu, aTypeDropdown, aTypePopup, aTypeTooltip, aTypeNotification, aTypeCombo, aTypeDnd: TAtom;
-    aHidden, aFullscreen, aWmDesktop, aBelow, aSticky, aDeskNames: TAtom;
+    aHidden, aFullscreen, aWmDesktop, aBelow, aAbove, aSticky, aDeskNames: TAtom;
     aStrut, aStrutPartial, aNumDesktops, aCurDesktop, aWorkarea, aDeskGeom, aDeskViewport, aSupportingCheck: TAtom;
     { drag state }
     FDrag: TDragKind;
@@ -79,6 +79,9 @@ type
     FDragHit: THitKind;
     FDragPX, FDragPY, FDragX, FDragY, FDragW, FDragH: Integer;
     FCfg: TConfig;
+    FMenu: TPopupMenu;
+    FMenuFont: TTitleFont;
+    FMenuClient: TClient;
     FCycleMods: cuint;
     FReload: Boolean;
     FCycling: Boolean;
@@ -129,12 +132,15 @@ type
     procedure CloseClient(C: TClient);
     procedure ToggleMaximize(C: TClient);
     procedure SetFullscreen(C: TClient; On: Boolean);
+    procedure SetAbove(C: TClient; On: Boolean);
     procedure Iconify(C: TClient);
     procedure Deiconify(C: TClient);
     procedure FocusNext(Exclude: TClient);
     procedure Activate(C: TClient; ATime: culong);
     procedure RaiseTransients(C: TClient; Depth: Integer);
     procedure SetFrameExtentsProp(C: TClient);
+    procedure OpenWindowMenu(C: TClient; X, Y: Integer; ATime: culong);
+    procedure RunMenuAction(Id: Integer);
     procedure GrabKeys;
     function FindBinding(Kc, St: cuint): Integer;
     procedure RunAction(const B: TKeyBinding; ATime: culong);
@@ -196,16 +202,15 @@ end;
 function TolerantErrorHandler(Dpy: PDisplay; Err: PXErrorEvent): cint; cdecl;
 begin
   { clients vanish asynchronously; BadWindow & friends are normal }
-  if GetEnvironmentVariable('TIEWM_DEBUG') <> '' then
-    WriteLn(StdErr, 'tiewm: X error code=', Err^.error_code, ' request=', Err^.request_code,
-      ' resource=0x', IntToHex(Err^.resourceid, 1));
-  if GetEnvironmentVariable('TIEWM_DEBUG') <> '' then Flush(StdErr);
+  LogDebug(Format('X error code=%d request=%d resource=0x%s', [Err^.error_code, Err^.request_code, IntToHex(Err^.resourceid, 1)]));
   Result := 0;
 end;
 
 { ---- TWM ---- }
 
 constructor TWM.Create(ADpy: PDisplay; const ACfg: TConfig);
+var
+  MC: TMenuColors;
 begin
   inherited Create;
   FCfg := ACfg;
@@ -229,12 +234,21 @@ begin
   { a wrong theme name must not take the session down: fall back }
   if not FTheme.Load(FCfg.Theme, FCfg.Palette) then
   begin
+    LogInfo('xfwm4 theme "' + FCfg.Theme + '" not found, using Daloa');
     WriteLn(StdErr, 'tiewm: xfwm4 theme "', FCfg.Theme, '" not found, using Daloa');
     Flush(StdErr);
     if not FTheme.Load('Daloa', FCfg.Palette) then
       raise Exception.Create('xfwm4 theme not found: ' + FCfg.Theme + ' (and no Daloa to fall back to)');
   end;
   FFont := TTitleFont.Create(FDpy, FScr, FCfg.TitleFont);
+  FMenuFont := TTitleFont.Create(FDpy, FScr, FCfg.MenuFont);
+  MC.Back := $2D2D2D;
+  MC.Border := FCfg.Palette.Color1[wsActive] and $FFFFFF;
+  MC.Text := $E6E6E6;
+  MC.Disabled := $8A8A8A;
+  MC.HoverBack := MC.Border;
+  MC.HoverText := $FFFFFF;
+  FMenu := TPopupMenu.Create(FDpy, FScr, FMenuFont, MC);
   FOpts := DefaultFrameOpts(FTheme);
   FOpts.Layout := FCfg.ButtonLayout;
   InternAtoms;
@@ -254,6 +268,8 @@ end;
 
 destructor TWM.Destroy;
 begin
+  FMenu.Free;
+  FMenuFont.Free;
   FFont.Free;
   FTheme.Free;
   FClients.Free;
@@ -264,11 +280,7 @@ end;
 
 procedure TWM.Log(const Msg: string);
 begin
-  if FDebug then
-  begin
-    WriteLn(StdErr, 'tiewm: ', Msg);
-    Flush(StdErr);
-  end;
+  LogInfo(Msg);
 end;
 
 procedure TWM.InternAtoms;
@@ -292,6 +304,7 @@ begin
   aHidden := A('_NET_WM_STATE_HIDDEN'); aFullscreen := A('_NET_WM_STATE_FULLSCREEN');
   aWmDesktop := A('_NET_WM_DESKTOP');
   aBelow := A('_NET_WM_STATE_BELOW');
+  aAbove := A('_NET_WM_STATE_ABOVE');
   aSticky := A('_NET_WM_STATE_STICKY');
   aDeskNames := A('_NET_DESKTOP_NAMES');
   aStrut := A('_NET_WM_STRUT'); aStrutPartial := A('_NET_WM_STRUT_PARTIAL');
@@ -489,6 +502,7 @@ begin
   if (N < 0) or (N >= FNumDesk) or (N = FCurDesk) then Exit;
   if FDrag <> dgNone then EndDrag;
   if FCycling then EndCycle;
+  FMenu.Close;
   FCurDesk := N;
   SetCards(FRoot, aCurDesktop, [culong(N)]);
   for I := 0 to FClients.Count - 1 do ApplyVisibility(TClient(FClients[I]));
@@ -556,8 +570,13 @@ begin
   for I := 0 to High(FDesktops) do
     XLowerWindow(FDpy, FDesktops[I]);
   if not Full then
+  begin
+    for I := 0 to FClients.Count - 1 do
+      if TClient(FClients[I]).Above and VisibleNow(TClient(FClients[I])) then
+        XRaiseWindow(FDpy, TClient(FClients[I]).Frame);
     for I := 0 to High(FDocks) do
       if not FDocks[I].Below then XRaiseWindow(FDpy, FDocks[I].Win);
+  end;
 end;
 
 procedure TWM.ReadStruts(var D: TDock);
@@ -617,7 +636,7 @@ procedure TWM.SetupEwmh;
 var
   Sup: array of culong;
   Name: string;
-  Atoms: array[0..18] of TAtom;
+  Atoms: array[0..19] of TAtom;
   Names: string;
   Zero: array of culong;
   I: Integer;
@@ -632,7 +651,7 @@ begin
   Atoms[8] := aCloseWindow; Atoms[9] := aWindowType; Atoms[10] := aSupportingCheck;
   Atoms[11] := aNumDesktops; Atoms[12] := aCurDesktop; Atoms[13] := aWorkarea;
   Atoms[14] := aHidden; Atoms[15] := aFullscreen; Atoms[16] := aWmDesktop;
-  Atoms[17] := aSticky; Atoms[18] := aDeskNames;
+  Atoms[17] := aSticky; Atoms[18] := aDeskNames; Atoms[19] := aAbove;
   SetLength(Sup, Length(Atoms));
   for I := 0 to High(Atoms) do Sup[I] := Atoms[I];
   SetCards(FRoot, aSupported, Sup);
@@ -692,10 +711,11 @@ end;
 
 procedure TWM.UpdateNetState(C: TClient);
 var
-  V: array[0..4] of TAtom;
+  V: array[0..5] of TAtom;
   N: Integer;
 begin
   N := 0;
+  if C.Above then begin V[N] := aAbove; Inc(N); end;
   if C.Desktop < 0 then begin V[N] := aSticky; Inc(N); end;
   if C.Maximized then begin V[N] := aMaxVert; Inc(N); V[N] := aMaxHorz; Inc(N); end;
   if C.Fullscreen then begin V[N] := aFullscreen; Inc(N); end;
@@ -1007,6 +1027,11 @@ var
 begin
   E := Ext(C);
   Par := FindClient(C.Transient);
+  if FMenuClient = C then
+  begin
+    FMenu.Close;
+    FMenuClient := nil;
+  end;
   if FCycleList.IndexOf(C) >= 0 then
   begin
     FCycleList.Remove(C);
@@ -1185,6 +1210,14 @@ begin
   XDeleteProperty(FDpy, FRoot, aActive);
 end;
 
+procedure TWM.SetAbove(C: TClient; On: Boolean);
+begin
+  if C.Above = On then Exit;
+  C.Above := On;
+  UpdateNetState(C);
+  if On then RaiseClient(C) else Restack;
+end;
+
 procedure TWM.Iconify(C: TClient);
 var
   I: Integer;
@@ -1275,6 +1308,62 @@ begin
   Restack;   { panel goes back on top (or stays below while a window is fullscreen) }
 end;
 
+{ ---- window menu ---- }
+
+const
+  mnMinimize = 1;
+  mnMaximize = 2;
+  mnFullscreen = 3;
+  mnAbove = 4;
+  mnSticky = 5;
+  mnClose = 6;
+  mnDesktop = 100;     { + 0-based desktop }
+
+procedure TWM.OpenWindowMenu(C: TClient; X, Y: Integer; ATime: culong);
+var
+  K: Integer;
+begin
+  if FMenu.IsOpen then FMenu.Close;
+  if FCycling then EndCycle;
+  FMenu.Clear;
+  FMenu.Add(mnMinimize, 'Minimize', False, True);
+  if C.Maximized then FMenu.Add(mnMaximize, 'Restore', False, not C.Fullscreen)
+  else FMenu.Add(mnMaximize, 'Maximize', False, not C.Fullscreen);
+  FMenu.Add(mnFullscreen, 'Fullscreen', C.Fullscreen, True);
+  FMenu.Add(mnAbove, 'Always on top', C.Above, True);
+  FMenu.Add(mnSticky, 'On all workspaces', C.Desktop < 0, True);
+  FMenu.AddSeparator;
+  for K := 0 to FNumDesk - 1 do
+    FMenu.Add(mnDesktop + K, 'Move to Workspace ' + IntToStr(K + 1), C.Desktop = K, C.Desktop <> K);
+  FMenu.AddSeparator;
+  FMenu.Add(mnClose, 'Close', False, True);
+  FMenuClient := C;
+  if not FMenu.Popup(X, Y, ATime) then
+  begin
+    FMenuClient := nil;
+    Log('window menu: could not grab the pointer');
+  end;
+end;
+
+procedure TWM.RunMenuAction(Id: Integer);
+var
+  C: TClient;
+begin
+  C := FMenuClient;
+  FMenuClient := nil;
+  if (C = nil) or (FClients.IndexOf(C) < 0) then Exit;
+  if Id = mnMinimize then Iconify(C)
+  else if Id = mnMaximize then ToggleMaximize(C)
+  else if Id = mnFullscreen then SetFullscreen(C, not C.Fullscreen)
+  else if Id = mnAbove then SetAbove(C, not C.Above)
+  else if Id = mnSticky then
+  begin
+    if C.Desktop < 0 then MoveToDesktop(C, FCurDesk) else MoveToDesktop(C, -1);
+  end
+  else if Id = mnClose then CloseClient(C)
+  else if (Id >= mnDesktop) and (Id < mnDesktop + FNumDesk) then MoveToDesktop(C, Id - mnDesktop);
+end;
+
 { ---- keyboard: Alt+F4, Alt+Tab cycling, Super+Return, Alt+F9, Alt+F11 ---- }
 
 procedure TWM.GrabKeys;
@@ -1334,6 +1423,9 @@ begin
     kaDeskRight: SwitchDesktop(FCurDesk + 1, ATime);
     kaMoveLeft: if FFocused <> nil then MoveFocusedTo(FFocused.Desktop - 1, ATime);
     kaMoveRight: if FFocused <> nil then MoveFocusedTo(FFocused.Desktop + 1, ATime);
+    kaWindowMenu:
+      if FFocused <> nil then
+        OpenWindowMenu(FFocused, FFocused.X + 24, FFocused.Y + FTheme.Metrics.TitleH, ATime);
     kaGotoDesk: SwitchDesktop(B.Arg - 1, ATime);
     kaMoveToDesk: MoveFocusedTo(B.Arg - 1, ATime);
   end;
@@ -1584,6 +1676,8 @@ end;
 
 procedure TWM.OnButtonPress(var Ev: TXButtonEvent);
 var
+  Rects: TButtonRects;
+  K: Integer;
   C: TClient;
   H: THit;
   St: Cardinal;
@@ -1620,10 +1714,25 @@ begin
   if C = nil then Exit;
   FocusClient(C, Ev.time);
   RaiseClient(C);
-  if Ev.button <> 1 then Exit;
   H := FTheme.HitTest(FOpts, C.W, C.H, Ev.x, Ev.y);
+  if Ev.button = 3 then
+  begin
+    { right-click on the titlebar: window menu }
+    if (H.Kind = hkTitle) or ((H.Kind = hkButton) and (H.Letter = 'O')) then
+      OpenWindowMenu(C, Ev.x_root, Ev.y_root, Ev.time);
+    Exit;
+  end;
+  if Ev.button <> 1 then Exit;
   case H.Kind of
     hkButton:
+      if H.Letter = 'O' then
+      begin
+        Rects := FTheme.ButtonRects(FOpts, C.W, wsActive);
+        for K := 0 to High(Rects) do
+          if Rects[K].Letter = 'O' then
+            OpenWindowMenu(C, C.X + Rects[K].X, C.Y + Rects[K].Y + Rects[K].H, Ev.time);
+      end
+      else
       begin
         FPressClient := C;
         FPressLetter := H.Letter;
@@ -1748,6 +1857,16 @@ begin
         end;
         if Want <> C.Maximized then ToggleMaximize(C);
       end
+      else if A = aAbove then
+      begin
+        case Act of
+          0: Want := False;
+          1: Want := True;
+        else
+          Want := not C.Above;
+        end;
+        SetAbove(C, Want);
+      end
       else if A = aSticky then
       begin
         case Act of
@@ -1805,7 +1924,16 @@ begin
 end;
 
 procedure TWM.HandleEvent(var Ev: TXEvent);
+var
+  MenuId: Integer;
+  R: TMenuResult;
 begin
+  if FMenu.IsOpen then
+  begin
+    R := FMenu.HandleEvent(Ev, MenuId);
+    if R = mrSelected then RunMenuAction(MenuId);
+    if R <> mrNone then Exit;
+  end;
   case Ev._type of
     MapRequest: OnMapRequest(Ev.xmaprequest);
     ConfigureRequest: OnConfigureRequest(Ev.xconfigurerequest);
@@ -1840,7 +1968,13 @@ begin
       { drags generate floods of motion: keep only the newest }
       if Ev._type = MotionNotify then
         while XCheckTypedEvent(FDpy, MotionNotify, @Nx) do Ev := Nx;
-      HandleEvent(Ev);
+      try
+        HandleEvent(Ev);
+      except
+        { a bug in one handler must not take the whole session down }
+        on E: Exception do
+          LogInfo(Format('EXCEPTION %s in event type %d: %s', [E.ClassName, Ev._type, E.Message]));
+      end;
     end;
     if FReload then
     begin

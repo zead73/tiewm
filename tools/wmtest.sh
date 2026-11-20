@@ -11,6 +11,8 @@ mkdir -p "$TMP"
 # never read the real ~/.config/tiewm/tiewm.conf: tests use defaults unless a scenario says otherwise
 export TIEWM_CONFIG="$TMP/none.conf"
 rm -f "$TMP/none.conf"
+# and never write the real ~/.local/state/tiewm/tiewm.log
+export TIEWM_LOG="$TMP/tiewm.log"
 TW="$HERE/testwin"; XDO="$HERE/xdo"; XG="$HERE/xgeom"; WM="$ROOT/tiewm"
 PASS=0; FAIL=0
 
@@ -31,7 +33,7 @@ start_xvfb() {
     sleep 1
   fi
 }
-start_wm() { TIEWM_DEBUG=1 "$WM" 2>"$TMP/wm.log" & WMPID=$!; sleep 0.8; }
+start_wm() { "$WM" 2>"$TMP/wm.log" & WMPID=$!; sleep 0.8; }
 stop_wm() { kill -TERM "$WMPID" 2>/dev/null; wait "$WMPID" 2>/dev/null; }
 stop_clients() { pkill -x testwin 2>/dev/null; sleep 0.3; }
 cleanup() { stop_clients; kill "$WMPID" 2>/dev/null; wait "$WMPID" 2>/dev/null; }
@@ -422,6 +424,84 @@ xprop -id "$LAST_ID" _NET_FRAME_EXTENTS | grep -q "= $M, $M, $T, $M"; check "an 
 grep -q 'not found, using Daloa' "$TMP/wm.log"; check "and says so on stderr" $?
 stop_wm; stop_clients
 export TIEWM_CONFIG="$TMP/none.conf"; start_wm
+
+echo "== 22. log file: startup/manage/shutdown lines, rotation, level off, config warnings, debug mirror"
+stop_wm; stop_clients
+rm -f "$TMP/log22.log" "$TMP/log22.log.1"
+export TIEWM_CONFIG="$TMP/none.conf" TIEWM_LOG="$TMP/log22.log"; start_wm
+newwin lg -t "Log me" -w 300 -h 200 -c 336633 -s 60 -p 400,300
+sec 0.4
+grep -q 'tiewm .* starting on :99 (theme Daloa, 4 desktops' "$TMP/log22.log"; check "log has a startup line" $?
+grep -q 'config: none' "$TMP/log22.log" && grep -q 'managing the display' "$TMP/log22.log"; check "log says which config it used and that it is managing" $?
+grep -q 'managed 0x[0-9A-Fa-f]* "Log me"' "$TMP/log22.log"; check "log records a managed window with its title" $?
+stop_wm; sleep 0.5
+grep -q 'shutting down' "$TMP/log22.log" && grep -q ' bye' "$TMP/log22.log"; check "clean shutdown is logged" $?
+stop_clients
+head -c 600000 /dev/zero | tr '\0' 'x' | fold -w 100 >"$TMP/log22.log"
+start_wm; sleep 0.4
+[ -f "$TMP/log22.log.1" ] && [ "$(stat -c %s "$TMP/log22.log")" -lt 10000 ]; check "a log over 512 KiB is rotated to .1 at start" $?
+stop_wm
+printf 'log_level = off\nlog_file = %s\n' "$TMP/off.log" >"$TMP/c4.conf"; rm -f "$TMP/off.log"
+export TIEWM_CONFIG="$TMP/c4.conf"; unset TIEWM_LOG; start_wm; sleep 0.4
+[ ! -e "$TMP/off.log" ]; check "log_level = off writes no file" $?
+stop_wm
+printf 'bogus = 1\nlog_file = %s\n' "$TMP/warn.log" >"$TMP/c5.conf"; rm -f "$TMP/warn.log"
+export TIEWM_CONFIG="$TMP/c5.conf"; start_wm; sleep 0.4
+grep -q 'config warning: line 1: unknown setting' "$TMP/warn.log"; check "config warnings go to the log file (log_file from the config)" $?
+stop_wm
+export TIEWM_CONFIG="$TMP/none.conf" TIEWM_LOG="$TMP/log22.log"; rm -f "$TMP/log22.log"
+TIEWM_DEBUG=1 start_wm; sleep 0.4
+grep -q 'starting on' "$TMP/wm.log"; check "TIEWM_DEBUG mirrors the log to stderr" $?
+stop_wm
+export TIEWM_CONFIG="$TMP/none.conf" TIEWM_LOG="$TMP/tiewm.log"
+start_wm
+
+echo "== 23. window menu (keyboard and mouse) and always-on-top"
+menuinfo() { "$XG" | grep 'name="tiewm-menu"' | head -1; }
+menuopen() { menuinfo | grep -q 'viewable=1'; }
+stop_clients
+newwin mn -t "Menu test" -w 300 -h 200 -c 7733aa -s 300 -p 400,300; MN=$LAST_ID
+"$XDO" keydown Alt_L key space keyup Alt_L; sec 0.6
+menuopen; check "Alt+space opens the window menu" $?
+"$XDO" key Escape; sec 0.5
+! menuopen; check "Escape closes it" $?
+"$XDO" key a; sec 0.3
+grep -q KeyPress "$TMP/mn.log"; check "the keyboard is released after the menu closes" $?
+"$XDO" keydown Alt_L key space keyup Alt_L; sec 0.5; "$XDO" key Down key Down key Return; sec 0.8
+G=$(absgeom "$MN"); [ "$(field "$G" w)" -eq $((1280-2*M)) ]; check "menu: Maximize (2nd item) maximizes ($G)" $?
+"$XDO" keydown Alt_L key space keyup Alt_L; sec 0.5; "$XDO" key Down key Down key Return; sec 0.8
+G=$(absgeom "$MN"); [ "$(field "$G" w)" -eq 300 ]; check "menu: the same item now says Restore and restores ($G)" $?
+"$XDO" keydown Alt_L key space keyup Alt_L; sec 0.5; "$XDO" key Down key Down key Down key Down key Return; sec 0.8
+xprop -id "$MN" _NET_WM_STATE | grep -q ABOVE; check "menu: Always on top sets _NET_WM_STATE_ABOVE" $?
+newwin ot -t "Other" -w 300 -h 200 -c 227733 -s 300 -p 100,500; OT=$LAST_ID
+"$XDO" move 150 600 click 1; sec 0.5
+[ "$(stackpos "$MN")" -gt "$(stackpos "$OT")" ]; check "an always-on-top window stays above a window that was just raised (mn=$(stackpos "$MN") ot=$(stackpos "$OT"))" $?
+"$XDO" move 500 420 click 1; sec 0.4
+"$XDO" keydown Alt_L key space keyup Alt_L; sec 0.5; "$XDO" key Down key Down key Down key Down key Return; sec 0.8
+! xprop -id "$MN" _NET_WM_STATE | grep -q ABOVE; check "menu: Always on top toggles off again" $?
+"$XDO" keydown Alt_L key space keyup Alt_L; sec 0.5; "$XDO" key Down key Down key Down key Down key Down key Return; sec 0.8
+[ "$(deskof "$MN")" = "4294967295" ]; check "menu: On all workspaces makes the window sticky" $?
+"$XDO" keydown Alt_L key space keyup Alt_L; sec 0.5; "$XDO" key Down key Down key Down key Down key Down key Return; sec 0.8
+[ "$(deskof "$MN")" = "0" ]; check "menu: and toggles it back to the current desktop" $?
+"$XDO" keydown Alt_L key space keyup Alt_L; sec 0.5
+"$XDO" key Down key Down key Down key Down key Down key Down key Down key Return; sec 0.8
+[ "$(deskof "$MN")" = "2" ] && [ "$(viewable "$MN")" = "0" ]; check "menu: Move to Workspace 3 (the current one is disabled and skipped)" $?
+wmctrl -s 0; stop_clients; sec 0.3
+newwin mm -t "Mouse menu" -w 300 -h 200 -c aa5522 -s 120 -p 500,300; MM=$LAST_ID
+G=$(absgeom "$MM"); RX=$(field "$G" x); RY=$(field "$G" y)
+"$XDO" move $((RX+60)) $((RY-T+8)) click 3; sec 0.7
+menuopen; check "right-click on the titlebar opens the menu" $?
+I=$(menuinfo); MX=$(echo "$I" | sed -n 's/.* x=\([0-9-]*\) .*/\1/p'); MY=$(echo "$I" | sed -n 's/.* y=\([0-9-]*\) .*/\1/p'); MW=$(echo "$I" | sed -n 's/.* w=\([0-9]*\) .*/\1/p'); MH=$(echo "$I" | sed -n 's/.* h=\([0-9]*\) .*/\1/p')
+"$XDO" move 1200 700 click 1; sec 0.5
+! menuopen; check "a click outside closes the menu without doing anything" $?
+[ "$(viewable "$MM")" = "1" ] && ! grep -q WM_DELETE_WINDOW "$TMP/mm.log"; check "and the window is untouched" $?
+"$XDO" move $((RX-5+6+12)) $((RY-T+8)) click 1; sec 0.7
+menuopen; check "clicking the O button opens the menu too" $?
+I=$(menuinfo); MX=$(echo "$I" | sed -n 's/.* x=\([0-9-]*\) .*/\1/p'); MY=$(echo "$I" | sed -n 's/.* y=\([0-9-]*\) .*/\1/p'); MW=$(echo "$I" | sed -n 's/.* w=\([0-9]*\) .*/\1/p'); MH=$(echo "$I" | sed -n 's/.* h=\([0-9]*\) .*/\1/p')
+"$XDO" move $((MX+MW/2)) $((MY+MH-8)) click 1; sec 0.8
+grep -q WM_DELETE_WINDOW "$TMP/mm.log"; check "clicking the last row (Close) sends WM_DELETE_WINDOW" $?
+! menuopen; check "the menu is gone after selecting" $?
+stop_clients
 
 stop_wm
 

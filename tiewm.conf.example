@@ -22,12 +22,21 @@
 # left, center or right
 #title_align = left
 
+# Font of the window menu (right-click the titlebar, click the menu button, or Alt+space).
+#menu_font = Sans 10
+
 # Number of workspaces, 1..20.
 #desktops = 4
 
 # Title font rendering: greyscale antialiasing and hinting (0 none, 1 slight, 2 medium, 3 full, -1 = fontconfig's choice).
 #font_greyscale = true
 #font_hinting = 3
+
+# Log file: startup, managed/unmanaged windows, config warnings, reloads and any internal error.
+# Level off, info or debug (debug adds X protocol errors, which are normal when windows vanish).
+# One generation is kept: a log over 512 KiB is moved to <file>.1 at start.  `tiewm --log` prints the path.
+#log_file = ~/.local/state/tiewm/tiewm.log
+#log_level = info
 
 [colors]
 # xfwm4 themes take their colours from the GTK theme; these are the base colours tiewm uses
@@ -54,6 +63,8 @@
 # move_left / move_right: move the focused window one desktop over and follow it
 #move_left = Ctrl+Alt+Shift+Left
 #move_right = Ctrl+Alt+Shift+Right
+# window_menu: open the window menu for the focused window (also: right-click the titlebar)
+#window_menu = Alt+space
 #
 # Direct desktop keys (none by default; Ctrl+F1..F12 are already taken by lxqt-globalkeyshortcuts):
 #goto_desktop_1 = Super+1
