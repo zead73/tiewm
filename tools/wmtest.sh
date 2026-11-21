@@ -640,6 +640,92 @@ grep -q 'motif hints changed to title' "$TMP/ov.log" && xprop -id "$OV" _NET_FRA
 grep -q 'titlebar off' "$TMP/tiewm.log"; check "the log records the toggle" $?
 stop_clients
 
+echo "== 28. window rules ([windows] in the config): parse, match by WM_CLASS, written by the menu toggle, file otherwise untouched"
+stop_wm; stop_clients
+cat >"$TMP/c6.conf" <<'EOC'
+[windows]
+# comment inside windows
+testclass = no_titlebar
+other = titlebar
+broken = maybe
+EOC
+OUT=$("$WM" --check-config "$TMP/c6.conf" 2>&1); RC=$?
+[ $RC -eq 1 ] && echo "$OUT" | grep -q 'window testclass = no_titlebar' && echo "$OUT" | grep -q 'window other = titlebar' && echo "$OUT" | grep -q 'line 5: window rule for "broken"'; check "--check-config lists the rules and warns about a bad value" $?
+export TIEWM_CONFIG="$TMP/c6.conf"; start_wm
+newwin r1 -t "By class" -w 300 -h 200 -c aa3333 -s 60 -p 100,100 -C inst1,TestClass
+xprop -id "$LAST_ID" _NET_FRAME_EXTENTS | grep -q "= 0, 0, 0, 0"; check "rule no_titlebar applies to a window by its class (case-insensitive)" $?
+newwin r2 -t "By instance" -w 300 -h 200 -c 33aa33 -s 60 -p 500,100 -C Testclass,Whatever
+xprop -id "$LAST_ID" _NET_FRAME_EXTENTS | grep -q "= 0, 0, 0, 0"; check "... or by its instance name" $?
+newwin r3 -t "No rule" -w 300 -h 200 -c 3333aa -s 60 -p 100,400 -C zzz,Zzz
+xprop -id "$LAST_ID" _NET_FRAME_EXTENTS | grep -q "= $M, $M, $T, $M"; check "a window without a rule is decorated as usual" $?
+newwin r4 -t "Rule beats the hint" -w 300 -h 200 -c aaaa33 -s 60 -p 500,400 -D none -C q,Other
+xprop -id "$LAST_ID" _NET_FRAME_EXTENTS | grep -q "= $M, $M, $T, $M"; check "rule titlebar overrides an app that asks for no decorations" $?
+stop_wm; stop_clients
+cat >"$TMP/c7.conf" <<'EOC'
+# my comment at the top
+theme = Daloa
+
+[keys]
+# keys comment
+close = Alt+F4
+
+[windows]
+# existing rules
+existing = no_titlebar
+
+[colors]
+# colours below
+active_color_1 = #112233
+EOC
+cp "$TMP/c7.conf" "$TMP/c7.orig"
+export TIEWM_CONFIG="$TMP/c7.conf"; start_wm
+newwin w1 -t "Write rule" -w 300 -h 200 -c 3366aa -s 200 -p 400,300 -C appx,Fancy
+"$XDO" keydown Alt_L key space keyup Alt_L; sec 0.5; "$XDO" key Down key Down key Down key Down key Down key Down key Down key Down key Return; sec 0.9
+xprop -id "$LAST_ID" _NET_FRAME_EXTENTS | grep -q "= 0, 0, 0, 0"; check "menu toggle removes the titlebar" $?
+grep -q '^Fancy = no_titlebar$' "$TMP/c7.conf"; check "and writes 'Fancy = no_titlebar' to the config" $?
+[ "$(diff "$TMP/c7.orig" "$TMP/c7.conf" | grep -c '^[<>]')" = "1" ] && diff "$TMP/c7.orig" "$TMP/c7.conf" | grep -q '^> Fancy = no_titlebar$'; check "exactly one line was added; comments and other sections are untouched" $?
+L1=$(grep -n '^existing' "$TMP/c7.conf" | cut -d: -f1); L2=$(grep -n '^Fancy' "$TMP/c7.conf" | cut -d: -f1); L3=$(grep -n '^\[colors\]' "$TMP/c7.conf" | cut -d: -f1)
+[ "$L2" -gt "$L1" ] && [ "$L2" -lt "$L3" ]; check "the rule went into the [windows] section (line $L2 between $L1 and $L3)" $?
+stop_clients
+newwin w2 -t "Same class again" -w 300 -h 200 -c 66aa33 -s 200 -p 400,300 -C appx2,fancy
+xprop -id "$LAST_ID" _NET_FRAME_EXTENTS | grep -q "= 0, 0, 0, 0"; check "the next window of that class starts without a titlebar (no restart needed)" $?
+"$XDO" keydown Alt_L key space keyup Alt_L; sec 0.5; "$XDO" key Down key Down key Down key Down key Down key Down key Down key Return; sec 0.9
+xprop -id "$LAST_ID" _NET_FRAME_EXTENTS | grep -q "= $M, $M, $T, $M"; check "toggling back gives the titlebar again" $?
+cmp -s "$TMP/c7.orig" "$TMP/c7.conf"; check "and the rule is removed: the file is byte-identical to the original" $?
+stop_clients
+newwin w3 -t "Persist" -w 300 -h 200 -c aa6633 -s 200 -p 400,300 -C appy,Persist
+"$XDO" keydown Alt_L key space keyup Alt_L; sec 0.5; "$XDO" key Down key Down key Down key Down key Down key Down key Down key Down key Return; sec 0.9
+stop_wm; stop_clients
+start_wm
+newwin w4 -t "After restart" -w 300 -h 200 -c 6633aa -s 200 -p 400,300 -C appy,Persist
+xprop -id "$LAST_ID" _NET_FRAME_EXTENTS | grep -q "= 0, 0, 0, 0"; check "the choice survives a tiewm restart (read from the file)" $?
+stop_clients
+sed -i '/^\[windows\]/a Persist2 = no_titlebar' "$TMP/c7.conf"
+kill -HUP "$WMPID"; sec 0.8
+newwin w5 -t "After HUP" -w 300 -h 200 -c 33aa66 -s 200 -p 400,300 -C appz,Persist2
+xprop -id "$LAST_ID" _NET_FRAME_EXTENTS | grep -q "= 0, 0, 0, 0"; check "SIGHUP picks up a rule added by hand" $?
+stop_wm; stop_clients
+printf 'theme = Daloa\n' >"$TMP/c8.conf"
+export TIEWM_CONFIG="$TMP/c8.conf"; start_wm
+newwin w6 -t "No windows section" -w 300 -h 200 -c 3366aa -s 200 -p 400,300 -C appx,Fancy
+"$XDO" keydown Alt_L key space keyup Alt_L; sec 0.5; "$XDO" key Down key Down key Down key Down key Down key Down key Down key Down key Return; sec 0.9
+printf 'theme = Daloa\n\n[windows]\nFancy = no_titlebar\n' >"$TMP/c8.expected"
+cmp -s "$TMP/c8.expected" "$TMP/c8.conf"; check "a config without [windows] gets the section appended after a blank line" $?
+stop_wm; stop_clients
+rm -rf "$TMP/newdir"; export TIEWM_CONFIG="$TMP/newdir/sub/tiewm.conf"; start_wm
+newwin w7 -t "No config file" -w 300 -h 200 -c 3366aa -s 200 -p 400,300 -C appx,Fancy
+"$XDO" keydown Alt_L key space keyup Alt_L; sec 0.5; "$XDO" key Down key Down key Down key Down key Down key Down key Down key Down key Return; sec 0.9
+grep -q '^\[windows\]$' "$TMP/newdir/sub/tiewm.conf" && grep -q '^Fancy = no_titlebar$' "$TMP/newdir/sub/tiewm.conf"; check "with no config file at all, the file and its folders are created" $?
+stop_wm; stop_clients
+printf '[windows]\n' >"$TMP/c10.conf"; export TIEWM_CONFIG="$TMP/c10.conf"; start_wm
+newwin w8 -t "Hint equals choice" -w 300 -h 200 -c aa33aa -s 200 -p 400,300 -D none -C hintapp,Hinty
+"$XDO" keydown Alt_L key space keyup Alt_L; sec 0.5; "$XDO" key Down key Down key Down key Down key Down key Down key Down key Return; sec 0.9
+xprop -id "$LAST_ID" _NET_FRAME_EXTENTS | grep -q "= $M, $M, $T, $M" && grep -q '^Hinty = titlebar$' "$TMP/c10.conf"; check "an app that asks for no titlebar: choosing one is saved as 'titlebar'" $?
+"$XDO" keydown Alt_L key space keyup Alt_L; sec 0.5; "$XDO" key Down key Down key Down key Down key Down key Down key Down key Down key Return; sec 0.9
+xprop -id "$LAST_ID" _NET_FRAME_EXTENTS | grep -q "= 0, 0, 0, 0" && ! grep -q 'Hinty' "$TMP/c10.conf"; check "choosing what the app asks for again removes the rule" $?
+stop_wm; stop_clients
+export TIEWM_CONFIG="$TMP/none.conf"; start_wm
+
 stop_wm
 
 echo

@@ -76,3 +76,15 @@
 #goto_desktop_1 = Super+1
 #goto_desktop_2 = Super+2
 #move_to_desktop_1 = Super+Shift+1
+
+[windows]
+# Per-application window rules, matched by WM_CLASS (the class or the instance name, any case;
+# `xprop WM_CLASS` on a window shows both).  Values: titlebar | no_titlebar.
+# These override what an app asks for itself (apps such as Electron ones that draw their own
+# titlebar already get none without a rule).
+# tiewm writes these lines itself: choose "No titlebar" in a window's menu (Alt+space, or right-click
+# the titlebar) and the rule for that application is added here; choosing what the app asks for
+# removes it again.  The rest of the file, comments included, is left exactly as it is.
+# Rules apply to windows opened afterwards; `pkill -HUP -x tiewm` re-reads hand edits.
+#com.example.SomeApp = no_titlebar
+#SomeOtherApp = titlebar

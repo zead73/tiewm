@@ -5,6 +5,7 @@ program testwin;
     testwin [-t title] [-w width] [-h height] [-c rrggbb] [-s seconds]
             [-m minw,minh] [-p x,y]   program-specified position (USPosition)
             [-T newtitle,afterseconds]  change the title later
+            [-C instance,class]       set WM_CLASS
             [-D none|all|notitle|border|title]  set _MOTIF_WM_HINTS decorations before mapping
             [-M mode,seconds]         change _MOTIF_WM_HINTS later (same modes)
             [-y desktop|dock|dockbelow]  set _NET_WM_WINDOW_TYPE (dockbelow also sets STATE_BELOW)
@@ -28,6 +29,8 @@ var
   Iconified: Boolean;
   WinType: string;
   MotifMode, MotifLater: string;
+  ClassInst, ClassName: string;
+  CHint: TXClassHint;
   MotifAfter: Integer;
   MotifChanged: Boolean;
   AMotif: TAtom;
@@ -69,6 +72,7 @@ begin
   MinW := 0; MinH := 0; HavePos := False; NoDelete := False; NewTitle := ''; ChangeAfter := 0;
   IconifyAfter := -1; ParentId := 0; Iconified := False; WinType := '';
   MotifMode := ''; MotifLater := ''; MotifAfter := 0; MotifChanged := False;
+  ClassInst := ''; ClassName := '';
   I := 1;
   while I <= ParamCount do
   begin
@@ -93,6 +97,10 @@ begin
       end
       else if Opt = '-y' then WinType := S
       else if Opt = '-D' then MotifMode := S
+      else if Opt = '-C' then
+      begin
+        P := Pos(',', S); ClassInst := Copy(S, 1, P - 1); ClassName := Copy(S, P + 1, 99);
+      end
       else if Opt = '-M' then
       begin
         P := Pos(',', S); MotifLater := Copy(S, 1, P - 1); MotifAfter := StrToInt(Copy(S, P + 1, 99));
@@ -125,6 +133,12 @@ begin
   if not NoDelete then XSetWMProtocols(Dpy, Win, @WmDelete, 1);
   if ParentId <> 0 then XSetTransientForHint(Dpy, Win, ParentId);
   if MotifMode <> '' then SetMotif(Dpy, Win, MotifMode);
+  if ClassName <> '' then
+  begin
+    CHint.res_name := PChar(ClassInst);
+    CHint.res_class := PChar(ClassName);
+    XSetClassHint(Dpy, Win, @CHint);
+  end;
   if WinType <> '' then
   begin
     AType := XInternAtom(Dpy, '_NET_WM_WINDOW_TYPE', 0);

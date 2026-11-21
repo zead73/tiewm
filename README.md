@@ -33,7 +33,7 @@ Run it ONLY on a display you mean to manage: `DISPLAY=:99 ./tiewm` (it refuses t
 the root; `TIEWM_THEME`, `TIEWM_FONT`, `TIEWM_DEBUG=1` are the only settings so far). SIGTERM/SIGINT hand all
 windows back to the root cleanly.
 
-Works (180 scenario checks, `tools/wmtest.sh`, scratch Xvfb on :99 only): manage/adopt/unmanage, centred
+Works (198 scenario checks, `tools/wmtest.sh`, scratch Xvfb on :99 only): manage/adopt/unmanage, centred
 placement (honours USPosition), themed frames with shape, click-to-focus with click replay to the app,
 raise on click, active/inactive repaint, title updates, titlebar drag and Alt+drag (also with Num/Caps Lock),
 Alt+right-drag resize, edge/corner resize with min-size and size-increment hints, close button
@@ -62,6 +62,12 @@ appears/disappears, the client stays where it is). Undecorated windows still mov
 Alt+right-drag or Alt+F8, maximize/fullscreen/close/menu (Alt+space) as usual; Shade is disabled for them.
 The window menu's "No titlebar" entry (Alt+space opens it on an undecorated window) turns the frame off or on for any
 window by hand; the client never moves, and a titlebar that would land above the work area pushes the window down.
+
+Window rules: `[windows]` in the config (`Class = titlebar|no_titlebar`, matched by WM_CLASS class or instance, case
+insensitive) override what an app asks for. The window menu's "No titlebar" writes the rule itself: only when the choice
+differs from the app's own hints (choosing what the app asks for removes the rule again), as one added/changed/removed
+line inside `[windows]` with everything else untouched (permissions kept, replaced atomically; a missing file, folder or
+section is created). Applies to windows opened afterwards; SIGHUP re-reads hand edits. `--check-config` lists the rules.
 
 Shade: the S button, the window menu, `_NET_WM_STATE_SHADED` (wmctrl -b add,shaded) or the `shade` key action roll a window up
 to its titlebar (frame resized, client stays mapped but clipped and still gets its real size in ConfigureNotify; no resize
@@ -118,10 +124,10 @@ unless every window has `_NET_WM_DESKTOP`.
   1. ~~Honour `_MOTIF_WM_HINTS` (decorations = 0) automatically~~ **done**: the Claude desktop window asks for no
      decorations (`_MOTIF_WM_HINTS = 0x2, 0, 0, 0, 0`, `WM_CLASS = com.anthropic.claude`) and now gets none.
   2. ~~A manual toggle for apps that do not ask~~ **done**: "No titlebar" in the window menu (menu only, no key action).
-     It is session-only until step 3 saves it. The user's choice wins over any later `_MOTIF_WM_HINTS` change.
-  3. Persist it per application in the config file, matched by `WM_CLASS`, e.g. a `[windows]` section with
-     `com.anthropic.claude = no_titlebar` (and an `ignore`/`titlebar` override for the opposite case). The menu toggle
-     writes that line itself, keeping the user's comments and the rest of the file intact.
+     The user's choice wins over any later `_MOTIF_WM_HINTS` change.
+  3. ~~Persist it per application in the config file~~ **done**: a `[windows]` section, `Class = no_titlebar` or
+     `Class = titlebar`, matched by `WM_CLASS` (class or instance, case-insensitive); the menu toggle writes/removes the
+     line itself and leaves the rest of the file, comments included, byte-for-byte alone.
   4. Design points: undecorated windows still need a way to move (Alt+drag already works) and resize (thin border
      option or Alt+right-drag), frame extents become 0 or the border only, and `_NET_FRAME_EXTENTS` must follow.
 

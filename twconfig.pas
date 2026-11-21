@@ -23,7 +23,7 @@ unit twconfig;
 interface
 
 uses
-  SysUtils, Classes, ctypes, x, xlib, twtheme, twlog;
+  SysUtils, Classes, ctypes, BaseUnix, x, xlib, twtheme, twlog;
 
 type
   TKeyAction = (kaClose, kaCycle, kaCycleBack, kaMaximize, kaIconify, kaFullscreen,
@@ -38,6 +38,14 @@ type
   end;
   TKeyBindings = array of TKeyBinding;
 
+  TRuleMode = (rmRemove, rmTitlebar, rmNoTitlebar);
+
+  { per-application window rule, matched by WM_CLASS (instance or class, case-insensitive) }
+  TWinRule = record
+    Cls: string;
+    Titlebar: Boolean;     { True: always give it a titlebar, False: never }
+  end;
+
   TConfig = record
     Theme, TitleFont, MenuFont, ButtonLayout, TitleAlign: string;
     NumDesktops: Integer;
@@ -46,6 +54,7 @@ type
     Palette: TThemePalette;
     InactiveText: LongWord;        { $RRGGBB }
     Keys: TKeyBindings;
+    Rules: array of TWinRule;
     LogFile: string;               { '' = no log file }
     LogLevel: TLogLevel;
     Path: string;
@@ -57,6 +66,14 @@ function DefaultConfigPath: string;
 function DefaultConfig: TConfig;
 { defaults, then the file (if it exists), then environment overrides }
 function LoadConfig(const Path: string): TConfig;
+{ the rule for a window with these WM_CLASS strings, if there is one }
+function FindWindowRule(const C: TConfig; const Inst, Cls: string; out Titlebar: Boolean): Boolean;
+{ keeps the in-memory rules in step with what was written to the file }
+procedure SetRuleInMemory(var C: TConfig; const Cls: string; Mode: TRuleMode);
+{ Edits the [windows] section of the config file in place: one line is added, changed
+  or removed, everything else (comments, other sections, order) is left alone. The file
+  and its folder are created if they do not exist. False and Err on failure. }
+function WriteWindowRule(const Path, Cls: string; Mode: TRuleMode; out Err: string): Boolean;
 function ParseCombo(const S: string; out Sym: TKeySym; out Mods: cuint): Boolean;
 function FormatCombo(Sym: TKeySym; Mods: cuint): string;
 function ActionName(Action: TKeyAction; Arg: Integer): string;
@@ -124,6 +141,7 @@ begin
   Result.Path := '';
   Result.Loaded := False;
   SetLength(Result.Keys, 0);
+  SetLength(Result.Rules, 0);
   SetLength(Result.Warnings, 0);
   AddBinding(Result, kaClose, 0, 'Alt+F4');
   AddBinding(Result, kaCycle, 0, 'Alt+Tab');
@@ -138,6 +156,157 @@ begin
   AddBinding(Result, kaWindowMenu, 0, 'Alt+space');
   AddBinding(Result, kaMoveWindow, 0, 'Alt+F7');
   AddBinding(Result, kaResizeWindow, 0, 'Alt+F8');
+end;
+
+
+function FindWindowRule(const C: TConfig; const Inst, Cls: string; out Titlebar: Boolean): Boolean;
+var
+  I: Integer;
+begin
+  Result := False;
+  for I := 0 to High(C.Rules) do
+    if ((Cls <> '') and SameText(C.Rules[I].Cls, Cls)) or ((Inst <> '') and SameText(C.Rules[I].Cls, Inst)) then
+    begin
+      Titlebar := C.Rules[I].Titlebar;
+      Exit(True);
+    end;
+end;
+
+procedure SetRuleInMemory(var C: TConfig; const Cls: string; Mode: TRuleMode);
+var
+  I, N: Integer;
+begin
+  for I := 0 to High(C.Rules) do
+    if SameText(C.Rules[I].Cls, Cls) then
+    begin
+      if Mode = rmRemove then
+      begin
+        for N := I to High(C.Rules) - 1 do C.Rules[N] := C.Rules[N + 1];
+        SetLength(C.Rules, Length(C.Rules) - 1);
+      end
+      else
+        C.Rules[I].Titlebar := Mode = rmTitlebar;
+      Exit;
+    end;
+  if Mode = rmRemove then Exit;
+  N := Length(C.Rules);
+  SetLength(C.Rules, N + 1);
+  C.Rules[N].Cls := Cls;
+  C.Rules[N].Titlebar := Mode = rmTitlebar;
+end;
+
+function WriteWindowRule(const Path, Cls: string; Mode: TRuleMode; out Err: string): Boolean;
+var
+  L: TStringList;
+  I, SecStart, SecEnd, Found, P, Ins: Integer;
+  T, Key, NewLine, Tmp, Value: string;
+  St: Stat;
+  HaveStat: Boolean;
+begin
+  Result := False;
+  Err := '';
+  if (Trim(Cls) = '') or (Pos('=', Cls) > 0) or (Pos(#10, Cls) > 0) or (Pos(#13, Cls) > 0) or
+     (Cls[1] = '#') or (Cls[1] = ';') or (Cls[1] = '[') then
+  begin
+    Err := 'class name "' + Cls + '" cannot be written to the config file';
+    Exit;
+  end;
+  L := TStringList.Create;
+  try
+    HaveStat := False;
+    if FileExists(Path) then
+    begin
+      try
+        L.LoadFromFile(Path);
+      except
+        on E: Exception do
+        begin
+          Err := 'cannot read ' + Path + ': ' + E.Message;
+          Exit;
+        end;
+      end;
+      HaveStat := FpStat(Path, St) = 0;
+    end
+    else
+    begin
+      if Mode = rmRemove then Exit(True);      { nothing to remove }
+      L.Add('# tiewm configuration (tiewm.conf.example documents every setting)');
+      L.Add('');
+    end;
+    SecStart := -1;
+    SecEnd := L.Count;
+    for I := 0 to L.Count - 1 do
+    begin
+      T := Trim(L[I]);
+      if (T <> '') and (T[1] = '[') and (T[Length(T)] = ']') then
+      begin
+        if SecStart < 0 then
+        begin
+          if LowerCase(Trim(Copy(T, 2, Length(T) - 2))) = 'windows' then SecStart := I;
+        end
+        else
+        begin
+          SecEnd := I;
+          Break;
+        end;
+      end;
+    end;
+    Found := -1;
+    if SecStart >= 0 then
+      for I := SecStart + 1 to SecEnd - 1 do
+      begin
+        T := Trim(L[I]);
+        if (T = '') or (T[1] = '#') or (T[1] = ';') then Continue;
+        P := Pos('=', T);
+        if P < 2 then Continue;
+        Key := Trim(Copy(T, 1, P - 1));
+        if SameText(Key, Cls) then Found := I;
+      end;
+    if Mode = rmRemove then
+    begin
+      if Found < 0 then Exit(True);
+      L.Delete(Found);
+    end
+    else
+    begin
+      if Mode = rmNoTitlebar then Value := 'no_titlebar' else Value := 'titlebar';
+      NewLine := Cls + ' = ' + Value;
+      if Found >= 0 then L[Found] := NewLine
+      else if SecStart >= 0 then
+      begin
+        Ins := SecEnd;
+        while (Ins - 1 > SecStart) and (Trim(L[Ins - 1]) = '') do Dec(Ins);
+        L.Insert(Ins, NewLine);
+      end
+      else
+      begin
+        if (L.Count > 0) and (Trim(L[L.Count - 1]) <> '') then L.Add('');
+        L.Add('[windows]');
+        L.Add(NewLine);
+      end;
+    end;
+    try
+      ForceDirectories(ExtractFileDir(Path));
+      Tmp := Path + '.tmp';
+      L.SaveToFile(Tmp);
+      if HaveStat then FpChmod(Tmp, St.st_mode and &7777);
+      if not RenameFile(Tmp, Path) then
+      begin
+        DeleteFile(Tmp);
+        Err := 'cannot replace ' + Path;
+        Exit;
+      end;
+    except
+      on E: Exception do
+      begin
+        Err := 'cannot write ' + Path + ': ' + E.Message;
+        Exit;
+      end;
+    end;
+    Result := True;
+  finally
+    L.Free;
+  end;
 end;
 
 { ---- key combos ---- }
@@ -424,6 +593,27 @@ begin
   else Warn(C, Format('line %d: unknown colour "%s"', [Line, Key]));
 end;
 
+procedure SetWindowRule(var C: TConfig; Line: Integer; const Key, Value: string);
+var
+  V: string;
+  Mode: TRuleMode;
+begin
+  V := LowerCase(Trim(Value));
+  if (V = 'no_titlebar') or (V = 'notitlebar') or (V = 'undecorated') then Mode := rmNoTitlebar
+  else if (V = 'titlebar') or (V = 'decorated') then Mode := rmTitlebar
+  else
+  begin
+    Warn(C, Format('line %d: window rule for "%s" must be titlebar or no_titlebar, not "%s"', [Line, Key, Trim(Value)]));
+    Exit;
+  end;
+  if Trim(Key) = '' then
+  begin
+    Warn(C, Format('line %d: window rule without a class name', [Line]));
+    Exit;
+  end;
+  SetRuleInMemory(C, Trim(Key), Mode);
+end;
+
 function LoadConfig(const Path: string): TConfig;
 var
   SL, Cleared: TStringList;
@@ -451,7 +641,7 @@ begin
         if (Line[1] = '[') and (Line[Length(Line)] = ']') then
         begin
           Section := LowerCase(Trim(Copy(Line, 2, Length(Line) - 2)));
-          if (Section <> 'general') and (Section <> 'colors') and (Section <> 'keys') then
+          if (Section <> 'general') and (Section <> 'colors') and (Section <> 'keys') and (Section <> 'windows') then
             Warn(Result, Format('line %d: unknown section [%s]', [I + 1, Section]));
           Continue;
         end;
@@ -465,7 +655,8 @@ begin
         Value := Trim(Copy(Line, P + 1, MaxInt));
         if Section = 'general' then SetGeneral(Result, I + 1, Key, Value)
         else if Section = 'colors' then SetColor(Result, I + 1, Key, Value)
-        else if Section = 'keys' then SetKeys(Result, I + 1, Key, Value, Cleared);
+        else if Section = 'keys' then SetKeys(Result, I + 1, Key, Value, Cleared)
+        else if Section = 'windows' then SetWindowRule(Result, I + 1, Key, Value);
       end;
     finally
       Cleared.Free;
@@ -531,6 +722,8 @@ begin
         if C.Keys[I].Action = A then Any := True;
       if not Any then Result := Result + 'key ' + ActionNames[A] + ' = (none)' + #10;
     end;
+  for I := 0 to High(C.Rules) do
+    Result := Result + 'window ' + C.Rules[I].Cls + ' = ' + BoolToStr(C.Rules[I].Titlebar, 'titlebar', 'no_titlebar') + #10;
   Arg := 0;
   for I := 0 to High(C.Warnings) do
   begin

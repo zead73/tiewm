@@ -25,6 +25,7 @@ type
     MinW, MinH, MaxW, MaxH, IncW, IncH, BaseW, BaseH: Integer;   { client sizes }
     Maximized, Fullscreen, Iconic, Above, Below, Shaded: Boolean;
     Decorated: Boolean;           { False: no frame graphics at all (the app draws its own) }
+    ResName, ResClass: string;    { WM_CLASS: instance and class }
     DecorUser: Integer;           { 0 = follow the app's hints, 1 = user wants a titlebar, 2 = user wants none }
     UnshadeH: Integer;            { frame height to return to when unshaded }
     Desktop: Integer;             { 0..N-1, or -1 = sticky (all desktops) }
@@ -143,6 +144,8 @@ type
     procedure SetBelow(C: TClient; On: Boolean);
     procedure SetShaded(C: TClient; On: Boolean);
     function WantsDecorations(Win: TWindow): Boolean;
+    procedure ReadClass(C: TClient);
+    procedure SaveDecorRule(C: TClient);
     procedure SetDecorated(C: TClient; On: Boolean);
     function OptsFor(C: TClient): TFrameOpts;
     procedure StartKb(Mode: TKbMode; ATime: culong);
@@ -951,6 +954,7 @@ var
   Atr: TXWindowAttributes;
   C: TClient;
   E: TExt;
+  RuleTb: Boolean;
   Sz: TXSizeHints;
   Supplied: clong;
   HasPos: Boolean;
@@ -992,7 +996,14 @@ begin
   C.Win := Win;
   C.Name := ReadName(Win);
   ReadHints(C);
+  ReadClass(C);
   C.Decorated := WantsDecorations(Win);
+  { a rule from the config file (matched by WM_CLASS) beats the app's own hints }
+  if FindWindowRule(FCfg, C.ResName, C.ResClass, RuleTb) then
+  begin
+    C.Decorated := RuleTb;
+    if RuleTb then C.DecorUser := 1 else C.DecorUser := 2;
+  end;
   E := Ext(C);
   C.Desktop := ReadDesktopProp(Win);
   if C.Desktop = -2 then
@@ -1241,6 +1252,50 @@ end;
   field is present: with MWM_DECOR_ALL set, the listed bits are taken away from "all";
   without it, only the listed bits are wanted. No title bar wanted = the app draws its own
   frame, so we draw none (a "border only" request is treated the same). }
+procedure TWM.ReadClass(C: TClient);
+var
+  H: TXClassHint;
+begin
+  C.ResName := '';
+  C.ResClass := '';
+  FillChar(H, SizeOf(H), 0);
+  if XGetClassHint(FDpy, C.Win, @H) <> 0 then
+  begin
+    if H.res_name <> nil then begin C.ResName := H.res_name; XFree(H.res_name); end;
+    if H.res_class <> nil then begin C.ResClass := H.res_class; XFree(H.res_class); end;
+  end;
+end;
+
+{ Remembers the user's titlebar choice for this application in the config file: a rule is
+  written only when the choice differs from what the app asks for on its own; choosing
+  what the app asks for removes the rule again. }
+procedure TWM.SaveDecorRule(C: TClient);
+var
+  Name, Err: string;
+  Mode: TRuleMode;
+begin
+  if C.ResClass <> '' then Name := C.ResClass else Name := C.ResName;
+  if Name = '' then
+  begin
+    Log('no WM_CLASS: the titlebar choice for "' + C.Name + '" cannot be saved');
+    Exit;
+  end;
+  if C.Decorated = WantsDecorations(C.Win) then Mode := rmRemove
+  else if C.Decorated then Mode := rmTitlebar
+  else Mode := rmNoTitlebar;
+  if WriteWindowRule(FCfg.Path, Name, Mode, Err) then
+  begin
+    SetRuleInMemory(FCfg, Name, Mode);
+    case Mode of
+      rmRemove: Log('config: removed the window rule for ' + Name);
+      rmTitlebar: Log('config: ' + Name + ' = titlebar saved to ' + FCfg.Path);
+      rmNoTitlebar: Log('config: ' + Name + ' = no_titlebar saved to ' + FCfg.Path);
+    end;
+  end
+  else
+    Log('config: could not save the titlebar rule: ' + Err);
+end;
+
 function TWM.WantsDecorations(Win: TWindow): Boolean;
 const
   MWM_HINTS_DECORATIONS = 2;
@@ -1515,6 +1570,7 @@ begin
     { the user's choice wins over whatever the app asks for from now on }
     if C.Decorated then C.DecorUser := 2 else C.DecorUser := 1;
     SetDecorated(C, C.DecorUser = 1);
+    SaveDecorRule(C);
   end
   else if Id = mnBelow then SetBelow(C, not C.Below)
   else if Id = mnSticky then
@@ -2255,6 +2311,7 @@ begin
       FReload := False;
       NewCfg := LoadConfig(FCfg.Path);
       FCfg.Keys := NewCfg.Keys;
+      FCfg.Rules := NewCfg.Rules;
       GrabKeys;
       Log(Format('reloaded key bindings from %s (%d bindings, %d warnings)',
         [FCfg.Path, Length(FCfg.Keys), Length(NewCfg.Warnings)]));
