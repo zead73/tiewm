@@ -50,13 +50,22 @@
 #log_level = info
 
 [colors]
-# xfwm4 themes take their colours from the GTK theme; these are the base colours tiewm uses
-# (measured from xfwm4 with Adwaita-dark).  Highlights and shadows are derived from them.
-#active_color_1 = #14529E
+# xfwm4 themes take their colours from the GTK theme.  These are what real xfwm4 produced here with the
+# GTK theme Adwaita-dark (read back with tools/themecheck.sh's probe); change them if your GTK theme differs.
+# Highlights, shadows and "mid" tones are derived from the two base colours (color_1 / color_2) the way xfwm4
+# does it (shade 1.3 / 0.7, truncated).
+#active_color_1 = #15539E
 #inactive_color_1 = #323232
 #active_color_2 = #353535
 #inactive_color_2 = #353535
+# Title text, and the glyphs of the titlebar buttons in themes that use the text colour.  A theme's own
+# themerc setting (active_text_color=..., inactive_text_color=...) takes precedence over these.
+#active_text_color = #FFFFFF
+#active_text_color_2 = #EEEEEC
 #inactive_text_color = #919190
+# Border colour used by themes that ask for it (Moheli)
+#active_border_color = #EEEEEC
+#inactive_border_color = #EEEEEC
 
 [keys]
 # action = Combo[, Combo ...]     "none" disables an action.

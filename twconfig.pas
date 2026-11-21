@@ -54,7 +54,6 @@ type
     FontGreyscale: Boolean;
     FontHinting: Integer;          { 0..3, -1 = leave to fontconfig }
     Palette: TThemePalette;
-    InactiveText: LongWord;        { $RRGGBB }
     Keys: TKeyBindings;
     Rules: array of TWinRule;
     LogFile: string;               { '' = no log file }
@@ -139,7 +138,6 @@ begin
   Result.FontGreyscale := True;
   Result.FontHinting := 3;
   Result.Palette := DefaultPalette;
-  Result.InactiveText := $919190;
   Result.LogFile := DefaultLogPath;
   Result.LogLevel := llInfo;
   Result.Path := '';
@@ -605,7 +603,19 @@ begin
   else if K = 'inactive_color_1' then C.Palette.Color1[wsInactive] := $FF000000 or Col
   else if K = 'active_color_2' then C.Palette.Color2[wsActive] := $FF000000 or Col
   else if K = 'inactive_color_2' then C.Palette.Color2[wsInactive] := $FF000000 or Col
-  else if K = 'inactive_text_color' then C.InactiveText := Col
+  else if K = 'active_text_color' then
+  begin
+    C.Palette.TextColor[wsActive] := $FF000000 or Col;
+    C.Palette.Text2Color[wsActive] := $FF000000 or Col;
+  end
+  else if K = 'active_text_color_2' then C.Palette.Text2Color[wsActive] := $FF000000 or Col
+  else if K = 'inactive_text_color' then
+  begin
+    C.Palette.TextColor[wsInactive] := $FF000000 or Col;
+    C.Palette.Text2Color[wsInactive] := $FF000000 or Col;
+  end
+  else if K = 'active_border_color' then C.Palette.BorderColor[wsActive] := $FF000000 or Col
+  else if K = 'inactive_border_color' then C.Palette.BorderColor[wsInactive] := $FF000000 or Col
   else Warn(C, Format('line %d: unknown colour "%s"', [Line, Key]));
 end;
 
@@ -728,7 +738,11 @@ begin
     'inactive_color_1 = ' + Hex6(C.Palette.Color1[wsInactive]) + #10 +
     'active_color_2 = ' + Hex6(C.Palette.Color2[wsActive]) + #10 +
     'inactive_color_2 = ' + Hex6(C.Palette.Color2[wsInactive]) + #10 +
-    'inactive_text_color = ' + Hex6(C.InactiveText) + #10;
+    'active_text_color = ' + Hex6(C.Palette.TextColor[wsActive]) + #10 +
+    'active_text_color_2 = ' + Hex6(C.Palette.Text2Color[wsActive]) + #10 +
+    'inactive_text_color = ' + Hex6(C.Palette.TextColor[wsInactive]) + #10 +
+    'active_border_color = ' + Hex6(C.Palette.BorderColor[wsActive]) + #10 +
+    'inactive_border_color = ' + Hex6(C.Palette.BorderColor[wsInactive]) + #10;
   for I := 0 to High(C.Keys) do
     Result := Result + 'key ' + ActionName(C.Keys[I].Action, C.Keys[I].Arg) + ' = ' +
       FormatCombo(C.Keys[I].Sym, C.Keys[I].Mods) + #10;

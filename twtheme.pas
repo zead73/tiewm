@@ -13,7 +13,7 @@ unit twtheme;
 interface
 
 uses
-  Classes, SysUtils, twimage;
+  Classes, SysUtils, Math, twimage;
 
 type
   TWinState = (wsActive, wsInactive);
@@ -22,6 +22,9 @@ type
   TThemePalette = record
     Color1: array[TWinState] of LongWord;
     Color2: array[TWinState] of LongWord;
+    TextColor: array[TWinState] of LongWord;     { active_text_color / inactive_text_color }
+    Text2Color: array[TWinState] of LongWord;    { ..._text_color_2, used by themes' themerc }
+    BorderColor: array[TWinState] of LongWord;
   end;
 
   TThemeMetrics = record
@@ -62,6 +65,7 @@ type
     FDir: string;
     FName: string;
     FRC: TStringList;
+    FLookupDepth: Integer;
     FPal: TThemePalette;
     FParts: TStringList;      { name -> TImg (nil = known missing) }
     FMetrics: TThemeMetrics;
@@ -76,6 +80,8 @@ type
     function Load(const ThemeName: string; const Pal: TThemePalette): Boolean;
     { palette symbol such as active_shadow_1 -> colour }
     function Symbol(const Name: string; out C: LongWord): Boolean;
+    { side of the square the menu-button icon is scaled to: the smaller side of the menu button's pixmap }
+    function MenuIconSize: Integer;
     { x range left over for the title between the button groups }
     procedure TitleSpan(const O: TFrameOpts; W: Integer; out LeftEnd, RightStart: Integer);
     { where each button of the layout sits in a frame W wide }
@@ -152,11 +158,13 @@ begin
   end;
 end;
 
+{ xfwm4 truncates (does not round) when it turns the shaded colour back into 8 bits: a plain Round
+  is off by one in a third of the cases (checked with tools/palettecheck) }
 function ClampByte(V: Double): LongWord;
 begin
   if V < 0 then V := 0;
   if V > 1 then V := 1;
-  Result := Round(V * 255);
+  Result := LongWord(Trunc(V * 255));
 end;
 
 function ShadeColor(C: LongWord; K: Double): LongWord;
@@ -187,11 +195,17 @@ end;
 
 function DefaultPalette: TThemePalette;
 begin
-  { measured from live xfwm4 + Adwaita-dark on this machine (2026-11-20) }
-  Result.Color1[wsActive] := $FF14529E;
+  { read back from real xfwm4 with a probe theme (tools/themecheck.sh, 2026-11-20), GTK theme Adwaita-dark }
+  Result.Color1[wsActive] := $FF15539E;
   Result.Color1[wsInactive] := $FF323232;
   Result.Color2[wsActive] := $FF353535;
   Result.Color2[wsInactive] := $FF353535;
+  Result.TextColor[wsActive] := $FFFFFFFF;
+  Result.TextColor[wsInactive] := $FF919190;
+  Result.Text2Color[wsActive] := $FFEEEEEC;
+  Result.Text2Color[wsInactive] := $FF919190;
+  Result.BorderColor[wsActive] := $FFEEEEEC;
+  Result.BorderColor[wsInactive] := $FFEEEEEC;
 end;
 
 function DefaultFrameOpts(Theme: TXfwmTheme): TFrameOpts;
@@ -267,6 +281,31 @@ begin
   if Pos('active_', Name) = 1 then begin St := wsActive; Rest := Copy(Name, 8, MaxInt); end
   else if Pos('inactive_', Name) = 1 then begin St := wsInactive; Rest := Copy(Name, 10, MaxInt); end
   else Exit;
+  { colours that are not derived from color_N }
+  { the button glyphs in many themes use active_text_color; xfwm4 gives it the value the theme's own
+    themerc sets for it (Default: active_text_color_2), the palette value only when it sets none }
+  if (Rest = 'text_color') or (Rest = 'text_shadow_color') then
+  begin
+    Kind := RC(Name, '');
+    if (Kind <> '') and (Kind <> Name) and (FLookupDepth < 4) then
+    begin
+      Inc(FLookupDepth);
+      try
+        if (Kind[1] = '#') and (Length(Kind) = 7) then
+        begin
+          C := $FF000000 or LongWord(StrToIntDef('$' + Copy(Kind, 2, 6), 0));
+          Exit(True);
+        end;
+        if PalLookup(Kind, C) then Exit(True);
+      finally
+        Dec(FLookupDepth);
+      end;
+    end;
+  end;
+  if Rest = 'text_color' then begin C := FPal.TextColor[St]; Exit(True); end;
+  if Rest = 'text_color_2' then begin C := FPal.Text2Color[St]; Exit(True); end;
+  if Rest = 'border_color' then begin C := FPal.BorderColor[St]; Exit(True); end;
+  if Rest = 'text_shadow_color' then begin C := ShadeColor(FPal.Color1[St], 0.7); Exit(True); end;
   if (Length(Rest) < 2) or not (Rest[Length(Rest)] in ['1', '2']) then Exit;
   Idx := Ord(Rest[Length(Rest)]) - Ord('0');
   Kind := Copy(Rest, 1, Length(Rest) - 2);
@@ -289,14 +328,26 @@ begin
   P := LoadPNGImg(FDir + PartName + '.png');
   if (X = nil) and (P = nil) then Exit(nil);
   if P = nil then Exit(X);
-  if X = nil then Exit(P);
-  Res := TImg.Create(P.W, P.H);
-  for Y := 0 to P.H - 1 do
-    for XX := 0 to P.W - 1 do
+  if X = nil then
+  begin
+    { a PNG-only corner (Nordic) has no XPM to say where the frame ends: xfwm4 cuts out every pixel that
+      is not fully opaque, so the rounded corner is a hard-edged shape }
+    if (Pos('top-left', PartName) = 1) or (Pos('top-right', PartName) = 1) or
+       (Pos('bottom-left', PartName) = 1) or (Pos('bottom-right', PartName) = 1) then
+      for Y := 0 to P.H - 1 do
+        for XX := 0 to P.W - 1 do
+          if (P.Get(XX, Y) shr 24) < 255 then P.SetPx(XX, Y, 0);
+    Exit(P);
+  end;
+  { xfwm4 sizes a part by its XPM; the PNG is laid over it from the top-left corner (checked against
+    real xfwm4 in tools/themecheck.sh: Daloa's menu button is the top 16 rows of its 19-row PNG) }
+  Res := TImg.Create(X.W, X.H);
+  for Y := 0 to X.H - 1 do
+    for XX := 0 to X.W - 1 do
     begin
       { the XPM is the shape: where it is transparent the PNG is not drawn }
-      Cmp := X.Get(XX mod X.W, Y mod X.H);
-      if (Cmp shr 24) <> 0 then Cmp := BlendPx(Cmp, P.Get(XX, Y));
+      Cmp := X.Get(XX, Y);
+      if ((Cmp shr 24) <> 0) and (XX < P.W) and (Y < P.H) then Cmp := BlendPx(Cmp, P.Get(XX, Y));
       Res.SetPx(XX, Y, Cmp);
     end;
   X.Free;
@@ -393,6 +444,25 @@ begin
   Result := True;
 end;
 
+function TXfwmTheme.MenuIconSize: Integer;
+var
+  X, P: TImg;
+begin
+  Result := 16;
+  { xfwm4 looks at the XPM part when there is one (Daloa: 24x16 although its PNG is 24x19) }
+  X := LoadXPMImg(FDir + 'menu-active.xpm', nil);
+  P := LoadPNGImg(FDir + 'menu-active.png');
+  try
+    if X <> nil then Result := Min(X.W, X.H)
+    else if P <> nil then Result := Min(P.W, P.H);
+  finally
+    X.Free;
+    P.Free;
+  end;
+  if Result < 8 then Result := 8;
+  if Result > 64 then Result := 64;
+end;
+
 function TXfwmTheme.Symbol(const Name: string; out C: LongWord): Boolean;
 begin
   Result := PalLookup(Name, C);
@@ -417,7 +487,7 @@ begin
     SetLength(Result, N + 1);
     Result[N].Letter := O.Layout[I];
     Result[N].X := X;
-    Result[N].Y := O.ButtonY;
+    Result[N].Y := O.ButtonY + Max(0, (FMetrics.TitleH - Img.H + 1) div 2);   { xfwm4 centres buttons in the title }
     Result[N].W := Img.W;
     Result[N].H := Img.H;
     Inc(X, Img.W + O.ButtonSpacing);
@@ -435,7 +505,7 @@ begin
     SetLength(Right, N + 1);
     Right[N].Letter := O.Layout[I];
     Right[N].X := X;
-    Right[N].Y := O.ButtonY;
+    Right[N].Y := O.ButtonY + Max(0, (FMetrics.TitleH - Img.H + 1) div 2);
     Right[N].W := Img.W;
     Right[N].H := Img.H;
     Dec(X, O.ButtonSpacing);
@@ -513,7 +583,7 @@ end;
 procedure TXfwmTheme.Compose(Dst: TImg; St: TWinState; const O: TFrameOpts);
 var
   M: TThemeMetrics;
-  W, H, X, I, MidA, MidB: Integer;
+  W, H, X, I, K, MidA, MidB, LeftEnd, RightStart: Integer;
   T1, T2, T3, T4, T5, Img: TImg;
   Cx, Cy: TImg;
   Rects: TButtonRects;
@@ -533,32 +603,53 @@ begin
   T5 := StatePart('title-5', St);
   MidA := M.TLW;
   MidB := W - M.TRW;
-  if T1 <> nil then begin Dst.Blend(T1, MidA, 0); Inc(MidA, T1.W); end;
-  if T5 <> nil then begin Dec(MidB, T5.W); Dst.Blend(T5, MidB, 0); end;
-  if (O.TextW > 0) and (T2 <> nil) and (T3 <> nil) and (T4 <> nil) then
+  { xfwm4 fills the title strip in three zones: title-1 tiled under the left button group, title-5
+    tiled under the right group, and in between title-3 (with full_width_title, the default) or
+    title-2 / title-3 / title-4 around the text. Pieces are drawn only down to the title height (a
+    tile can be a row taller than the title). }
+  TitleSpan(O, W, LeftEnd, RightStart);
+  { the zones reach as far past the buttons as the corner pieces are wider than the borders (Moheli: 7 - 4) }
+  Inc(LeftEnd, Max(0, M.TLW - M.LeftW));
+  Dec(RightStart, Max(0, M.TRW - M.RightW));
+  if LeftEnd < MidA then LeftEnd := MidA;
+  if LeftEnd > MidB then LeftEnd := MidB;
+  if RightStart > MidB then RightStart := MidB;
+  if RightStart < LeftEnd then RightStart := LeftEnd;
+  if T1 <> nil then Dst.BlendTiled(T1, MidA, 0, LeftEnd - MidA, Min(T1.H, M.TitleH));
+  if T5 <> nil then Dst.BlendTiled(T5, RightStart, 0, MidB - RightStart, Min(T5.H, M.TitleH));
+  if (not RCBool('full_width_title', True)) and (O.TextW > 0) and (T2 <> nil) and (T3 <> nil) and (T4 <> nil) then
   begin
     X := O.TextX;
-    if X < MidA then X := MidA;
-    if X > MidB then X := MidB;
-    Dst.BlendTiled(T2, MidA, 0, X - MidA, T2.H);
+    if X < LeftEnd then X := LeftEnd;
+    if X > RightStart then X := RightStart;
+    Dst.BlendTiled(T2, LeftEnd, 0, X - LeftEnd, Min(T2.H, M.TitleH));
     I := X + O.TextW;
-    if I > MidB then I := MidB;
-    Dst.BlendTiled(T3, X, 0, I - X, T3.H);
-    Dst.BlendTiled(T4, I, 0, MidB - I, T4.H);
+    if I > RightStart then I := RightStart;
+    Dst.BlendTiled(T3, X, 0, I - X, Min(T3.H, M.TitleH));
+    Dst.BlendTiled(T4, I, 0, RightStart - I, Min(T4.H, M.TitleH));
   end
   else if T3 <> nil then
-    Dst.BlendTiled(T3, MidA, 0, MidB - MidA, T3.H);
+    Dst.BlendTiled(T3, LeftEnd, 0, RightStart - LeftEnd, Min(T3.H, M.TitleH));
   { buttons: left to right, so each button's left edge wins where they overlap }
   Rects := ButtonRects(O, W, St);
   for I := 0 to High(Rects) do
   begin
     Img := ButtonImg(Rects[I].Letter, St, O);
-    if Img <> nil then Dst.Blend(Img, Rects[I].X, Rects[I].Y);
+    if Img = nil then Continue;
+    if (Rects[I].Letter = 'O') and (O.Icon <> nil) and (Img.H > O.Icon.H) then
+    begin
+      { with an app icon on it, the menu button is drawn only over the icon's own rows }
+      K := (Img.H - O.Icon.H + 1) div 2;
+      Dst.BlendRect(Img, Rects[I].X, Rects[I].Y + K, 0, K, Img.W, O.Icon.H);
+    end
+    else
+      Dst.Blend(Img, Rects[I].X, Rects[I].Y);
   end;
   if O.Icon <> nil then
     for I := 0 to High(Rects) do
       if Rects[I].Letter = 'O' then
-        Dst.Blend(O.Icon, Rects[I].X + (Rects[I].W - O.Icon.W) div 2, Rects[I].Y + (Rects[I].H - O.Icon.H) div 2);
+        { x centred, y rounded up: what xfwm4 does }
+        Dst.Blend(O.Icon, Rects[I].X + (Rects[I].W - O.Icon.W) div 2, Rects[I].Y + (Rects[I].H - O.Icon.H + 1) div 2);
   if O.Shaded then Exit;
   { sides and bottom }
   Img := StatePart('left', St);

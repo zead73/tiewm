@@ -92,6 +92,7 @@ type
     FKbClient: TClient;
     FKbX, FKbY, FKbW, FKbH: Integer;
     FGenericIcon: TImg;
+    FIconSize: Integer;
     FMenu: TPopupMenu;
     FMenuFont: TTitleFont;
     FMenuClient: TClient;
@@ -225,9 +226,6 @@ const
   CleanLocks = LockMask or Mod2Mask;   { Caps Lock, Num Lock }
   DoubleClickMs = 400;
 
-const
-  IconSize = 16;
-
 { a plain window glyph for applications that set no icon }
 function MakeGenericIcon(Size: Integer): TImg;
 var
@@ -322,7 +320,6 @@ begin
   FCycleList := TList.Create;
   TitleFontGrey := FCfg.FontGreyscale;
   TitleFontHint := FCfg.FontHinting;
-  InactiveTextColor := FCfg.InactiveText;
   FTheme := TXfwmTheme.Create;
   { a wrong theme name must not take the session down: fall back }
   if not FTheme.Load(FCfg.Theme, FCfg.Palette) then
@@ -342,7 +339,8 @@ begin
   MC.HoverBack := MC.Border;
   MC.HoverText := $FFFFFF;
   FMenu := TPopupMenu.Create(FDpy, FScr, FMenuFont, MC);
-  FGenericIcon := MakeGenericIcon(IconSize);
+  FIconSize := FTheme.MenuIconSize;
+  FGenericIcon := MakeGenericIcon(FIconSize);
   FOpts := DefaultFrameOpts(FTheme);
   FOpts.Layout := FCfg.ButtonLayout;
   InternAtoms;
@@ -1539,7 +1537,7 @@ begin
       W := P[Pos]; H := P[Pos + 1];
       if (W = 0) or (H = 0) or (W > 1024) or (H > 1024) or (Pos + 2 + W * H > N) then Break;
       Area := Int64(W) * Int64(H);
-      if (W >= IconSize) and (H >= IconSize) then
+      if (W >= FIconSize) and (H >= FIconSize) then
       begin
         if (not BestBigEnough) or (Area < BestArea) then
         begin
@@ -1552,7 +1550,7 @@ begin
       end;
       Inc(Pos, 2 + W * H);
     end;
-    if Found then C.Icon := ScaleIcon(@P[BestPos + 2], BestW, BestH, IconSize);
+    if Found then C.Icon := ScaleIcon(@P[BestPos + 2], BestW, BestH, FIconSize);
   finally
     XFree(Data);
   end;

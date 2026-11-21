@@ -30,6 +30,8 @@ type
     procedure Blend(Src: TImg; DX, DY: Integer);
     { same, but repeat Src to cover the rectangle X,Y,W,H }
     procedure BlendTiled(Src: TImg; X, Y, W, H: Integer);
+    { blends only the rectangle SX,SY,W,H of Src, placing its top-left corner at DX,DY }
+    procedure BlendRect(Src: TImg; DX, DY, SX, SY, W, H: Integer);
     procedure SavePNG(const FileName: string);
     { raw pixel array (row-major, W*H), for fast loops }
     function Raw: PLongWord;
@@ -121,6 +123,16 @@ begin
       if InBounds(X + PX, Y + PY) then
         FPix[(Y + PY) * FW + X + PX] :=
           BlendPx(FPix[(Y + PY) * FW + X + PX], Src.Get(PX mod Src.W, PY mod Src.H));
+end;
+
+procedure TImg.BlendRect(Src: TImg; DX, DY, SX, SY, W, H: Integer);
+var
+  X, Y: Integer;
+begin
+  for Y := 0 to H - 1 do
+    for X := 0 to W - 1 do
+      if InBounds(DX + X, DY + Y) then
+        FPix[(DY + Y) * FW + DX + X] := BlendPx(FPix[(DY + Y) * FW + DX + X], Src.Get(SX + X, SY + Y));
 end;
 
 procedure TImg.SavePNG(const FileName: string);

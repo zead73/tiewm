@@ -44,14 +44,11 @@ type
 const
   { measured from xfwm4: gap between the last left button and the text }
   TitleTextGap = 5;
-  { inactive_text_color is not in Daloa's themerc; this is what xfwm4 showed }
-  DefaultInactiveText = $919190;
 
 var
   { set from the config file by the window manager }
   TitleFontGrey: Boolean = True;
   TitleFontHint: Integer = 3;
-  InactiveTextColor: LongWord = DefaultInactiveText;
 
 { Draws the whole frame (graphics + title) into a new pixmap and builds the
   shape mask for it. FrameW/FrameH are the outer size, the client sits in
@@ -97,7 +94,7 @@ var
   L, R, TW, Avail, VOff: Integer;
   Shown, ShadowKey, ColorKey: string;
   Mode: TShadowMode;
-  TextRGB, ShadowRGB: LongWord;
+  TextRGB, ShadowRGB, DefTextColor: LongWord;
   Root: TWindow;
   Vis: PVisual;
 begin
@@ -144,17 +141,24 @@ begin
   finally
     Img.Free;
   end;
+  { text colour: the theme's own setting (literal or a palette name such as active_text_color_2),
+    else the palette's text colour for that state }
   if St = wsActive then
-    TextRGB := ParseColorSpec(Theme, Theme.RC(ColorKey, ''), $FFFFFF)
+  begin
+    if not Theme.Symbol('active_text_color', DefTextColor) then DefTextColor := $FFFFFF;
+  end
   else
-    TextRGB := ParseColorSpec(Theme, Theme.RC(ColorKey, ''), InactiveTextColor);
+  begin
+    if not Theme.Symbol('inactive_text_color', DefTextColor) then DefTextColor := $919190;
+  end;
+  TextRGB := ParseColorSpec(Theme, Theme.RC(ColorKey, ''), DefTextColor and $FFFFFF);
   if LowerCase(Theme.RC(ShadowKey, 'false')) = 'frame' then Mode := smFrame4
   else if LowerCase(Theme.RC(ShadowKey, 'false')) = 'true' then Mode := smUnder
   else Mode := smNone;
   if St = wsActive then
-    ShadowRGB := ParseColorSpec(Theme, 'active_shadow_1', $000000)
+    ShadowRGB := ParseColorSpec(Theme, Theme.RC('active_text_shadow_color', 'active_text_shadow_color'), $000000)
   else
-    ShadowRGB := ParseColorSpec(Theme, 'inactive_shadow_1', $000000);
+    ShadowRGB := ParseColorSpec(Theme, Theme.RC('inactive_text_shadow_color', 'inactive_text_shadow_color'), $000000);
   Font.Draw(Result, Vis, DefaultColormap(Dpy, Scr), TextX, BaseY, Shown, TextRGB, Mode, ShadowRGB);
 end;
 

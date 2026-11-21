@@ -83,7 +83,7 @@ applied at map time; apps ask for those by client message after mapping.)
 App icon: the window's icon (`_NET_WM_ICON`: the smallest size that is at least 16 px, else the biggest, area-averaged
 down or up to 16x16 and centred on the menu button) is drawn there when the theme asks for it (`show_app_icon` in the
 theme's `themerc`; Daloa does) or the config says `show_app_icon = true`; `false` turns it off. Apps without an icon get a
-plain window glyph; icon changes are followed. (No icon-theme lookup by class or WM_HINTS pixmap fallback.)
+plain window glyph; icon changes are followed. (No icon-theme lookup by class or WM_HINTS pixmap fallback.) The size follows the theme: see "Theme verification" below.
 
 Button states: titlebar buttons use the theme's `prelight` image under the pointer and its `pressed` image while held
 (only while the pointer is still over the button; releasing elsewhere cancels the click). Needs the theme to ship those
@@ -171,7 +171,7 @@ session or lxqt-panel.
 - A part = XPM (symbolic colours filled from a GTK-derived palette) with the PNG alpha-blended
   on top; where the XPM is transparent the PNG is not drawn. The PNG sets the size.
 - Palette: `*_hilight_N` = base shaded 1.3, `*_shadow_N` = base shaded 0.7 (GTK2 HLS shade),
-  `*_mid_N` = average of the two (mid not yet verified). Here color_1 active = #14529E,
+  `*_mid_N` = average of the two (all verified against xfwm4, truncating not rounding). Here color_1 active = #15539E,
   inactive = #323232, color_2 = #353535 for both. Left/right/bottom borders use color_2.
 - `themerc` beats xfconf for `button_offset` (1) and `button_spacing` (-1): pixels match themerc.
 - Buttons start at x = left border + button_offset and overlap by -spacing; the right group is
@@ -206,6 +206,32 @@ Text rules measured from xfwm4 (Sans Bold 11, Xvfb 96 dpi):
 
 Build tools: `fpc -Mobjfpc -Sh -O1 -Fu.. themetest.pas` (from `tools/`). `framecheck` and `shapewin` need
 `DISPLAY` pointing at an X server (Xvfb is fine).
+
+## Theme verification against real xfwm4
+
+`tools/themecheck.sh [theme ...]` renders the same two windows (empty title, a deterministic 16x16 icon) under real xfwm4
+and under tiewm for every installed xfwm4 theme on the scratch display :99 and counts the pixels that differ by more than
+3 levels (`tools/imgdiff`), client area excluded; diff pictures go to `out/themes/`. xfwm4 runs on a private D-Bus session
+with a private config folder, so the real xfwm4 settings are never touched. Result (2026-11-20, GTK theme Adwaita-dark),
+inactive / active window: **Daloa 0/0, Default 0/0, Default-hdpi 0/0, Default-xhdpi 0/0, Kokodi 0/0, Nordic 0/0,
+Moheli 0/4** (the 4 are single pixels where Moheli's two title zones meet on the first and last row). Frame extents match
+xfwm4 for all seven.
+
+What the comparison found (each is now implemented):
+- The palette: a probe theme with one title column per symbolic colour name, rendered by xfwm4, gave the exact table
+  (`tools/palettecheck.pas` checks the derived values): base blue is #15539E, shades are *truncated* not rounded, and
+  `active_text_color` / `*_text_shadow_color` / `*_border_color` exist.
+- Button glyphs that use the symbol `active_text_color` take the value the theme's own `themerc` sets for it
+  (Default: `active_text_color_2`), not the palette's.
+- Title strip zones: `title-1` tiled under the left button group, `title-5` under the right group, `title-3` between
+  (`full_width_title`, the default); `title-2`/`title-4` only around the text when it is off. The zones reach past the
+  buttons by (corner width - border width) pixels.
+- A part is sized by its XPM, with the PNG laid over it from the top-left (Daloa's menu button is the top 16 rows of its
+  19-row PNG). A title tile can be a row taller than the title: it is clipped to the title height.
+- Corner parts that have only a PNG (Nordic): every pixel that is not fully opaque is cut out.
+- Buttons are centred vertically in the title: y = (title height - button height + 1) / 2.
+- App icon: scaled to the smaller side of the menu button's XPM (22 px in Default, 44 in Default-xhdpi), centred with the
+  vertical offset rounded up, and the menu button is drawn only over the icon's rows when it is taller than the icon.
 
 ## License
 

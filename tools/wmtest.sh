@@ -737,7 +737,7 @@ newwin ub -t "Border" -w 300 -h 200 -c cc9900 -s 300 -p 400,300 -D none; UB=$LAS
 xprop -id "$UB" _NET_FRAME_EXTENTS | grep -q "= 4, 4, 4, 4"; check "an undecorated window gets 4 px extents" $?
 G=$(absgeom "$UB"); [ "$(field "$G" x)" -eq 400 ] && [ "$(field "$G" y)" -eq 300 ] && [ "$(frameh "$UB")" = "208" ]; check "the client stays where the app put it; the frame is 4 px bigger on every side ($G, frame h $(frameh "$UB"))" $?
 import -window root "$TMP/ub1.png" 2>/dev/null
-[ "$(magick "$TMP/ub1.png" -format '%[hex:p{398,350}]' info:)" = "14529E" ] && [ "$(magick "$TMP/ub1.png" -format '%[hex:p{410,350}]' info:)" = "CC9900" ]; check "the border is drawn in the active colour, the client inside it" $?
+[ "$(magick "$TMP/ub1.png" -format '%[hex:p{398,350}]' info:)" = "15539E" ] && [ "$(magick "$TMP/ub1.png" -format '%[hex:p{410,350}]' info:)" = "CC9900" ]; check "the border is drawn in the active colour, the client inside it" $?
 newwin ub2 -t "Normal neighbour" -w 300 -h 200 -c 0099cc -s 300 -p 800,300; UB2=$LAST_ID
 sleep 0.3; import -window root "$TMP/ub2.png" 2>/dev/null
 [ "$(magick "$TMP/ub2.png" -format '%[hex:p{398,350}]' info:)" = "323232" ]; check "it turns grey when another window has the focus" $?
