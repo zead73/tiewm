@@ -848,6 +848,58 @@ printf 'show_app_icon = maybe\n' >"$TMP/c15.conf"
 "$WM" --check-config "$TMP/c15.conf" 2>&1 | grep -q 'line 1: show_app_icon must be'; check "a bad show_app_icon value is only a warning" $?
 export TIEWM_CONFIG="$TMP/none.conf"; start_wm
 
+echo "== 32. modal dialogs, and the window states an app sets itself are kept"
+stop_wm; stop_clients
+export TIEWM_CONFIG="$TMP/none.conf"; start_wm
+newwin mp -t "Main window" -w 500 -h 400 -c 335577 -s 300 -p 100,100; MP=$LAST_ID
+newwin md -t "Modal dialog" -w 200 -h 120 -c cc8833 -s 300 -p 800,150 -P "$MP" -S modal; MD=$LAST_ID
+xprop -id "$MD" _NET_WM_STATE | grep -q MODAL; check "the app's _NET_WM_STATE_MODAL survives (it is not overwritten)" $?
+[ "$(hexnorm "$(active)")" = "$(hexnorm "$MD")" ]; check "the dialog has the focus" $?
+"$XDO" move 300 300 click 1; sec 0.6
+[ "$(hexnorm "$(active)")" = "$(hexnorm "$MD")" ]; check "clicking the blocked main window keeps/gives the focus to the dialog" $?
+! grep -q ButtonPress "$TMP/mp.log"; check "and the click never reaches the main window's app" $?
+G=$(absgeom "$MP"); PX=$(field "$G" x); PY=$(field "$G" y)
+"$XDO" move $((PX+60)) $((PY-T+8)) click 1; sec 0.6
+[ "$(hexnorm "$(active)")" = "$(hexnorm "$MD")" ]; check "clicking the main window's titlebar also focuses the dialog" $?
+[ "$(stackpos "$MD")" -gt "$(stackpos "$MP")" ]; check "the dialog stays above its parent (md=$(stackpos "$MD") mp=$(stackpos "$MP"))" $?
+wmctrl -i -a "$MP"; sec 0.6
+[ "$(hexnorm "$(active)")" = "$(hexnorm "$MD")" ]; check "activating the main window from a taskbar goes to the dialog instead" $?
+"$XDO" keydown Alt_L key Tab keyup Alt_L; sec 0.6
+[ "$(hexnorm "$(active)")" = "$(hexnorm "$MD")" ]; check "Alt+Tab to the main window lands on the dialog" $?
+"$XDO" keydown Alt_L key F4 keyup Alt_L; sec 0.8
+grep -q WM_DELETE_WINDOW "$TMP/md.log"; check "Alt+F4 closes the dialog" $?
+[ "$(hexnorm "$(active)")" = "$(hexnorm "$MP")" ]; check "focus returns to the main window" $?
+"$XDO" move 300 300 click 1; sec 0.6
+grep -q ButtonPress "$TMP/mp.log"; check "with the dialog gone, clicks reach the main window again" $?
+stop_clients
+newwin np -t "Main 2" -w 500 -h 400 -c 335577 -s 300 -p 100,100; NP=$LAST_ID
+newwin nd -t "Not modal" -w 200 -h 120 -c cc8833 -s 300 -p 800,150 -P "$NP"; ND=$LAST_ID
+"$XDO" move 300 300 click 1; sec 0.6
+[ "$(hexnorm "$(active)")" = "$(hexnorm "$NP")" ] && grep -q ButtonPress "$TMP/np.log"; check "a transient that is NOT modal does not block its parent" $?
+wmctrl -i -r "$ND" -b add,modal; sec 0.6
+"$XDO" move 300 300 click 1; sec 0.6
+[ "$(hexnorm "$(active)")" = "$(hexnorm "$ND")" ]; check "wmctrl -b add,modal (client message) makes it block from then on" $?
+wmctrl -i -r "$ND" -b remove,modal; sec 0.6
+"$XDO" move 300 300 click 1; sec 0.6
+[ "$(hexnorm "$(active)")" = "$(hexnorm "$NP")" ]; check "and removing modal unblocks it" $?
+stop_clients
+newwin cp -t "Chain base" -w 500 -h 400 -c 335577 -s 300 -p 100,100; CP=$LAST_ID
+newwin ca -t "Chain A" -w 250 -h 150 -c aa8833 -s 300 -p 700,100 -P "$CP" -S modal; CA=$LAST_ID
+newwin cb -t "Chain B" -w 200 -h 120 -c 33aa88 -s 300 -p 700,400 -P "$CA" -S modal; CB=$LAST_ID
+"$XDO" move 300 300 click 1; sec 0.6
+[ "$(hexnorm "$(active)")" = "$(hexnorm "$CB")" ]; check "dialog over dialog: clicking the main window focuses the topmost dialog" $?
+"$XDO" move 800 150 click 1; sec 0.6
+[ "$(hexnorm "$(active)")" = "$(hexnorm "$CB")" ]; check "the middle dialog is blocked by the top one" $?
+stop_clients
+newwin s1 -t "Skip taskbar" -w 300 -h 200 -c 888888 -s 60 -p 400,300 -S skip_taskbar,skip_pager; S1=$LAST_ID
+xprop -id "$S1" _NET_WM_STATE | grep -q SKIP_TASKBAR && xprop -id "$S1" _NET_WM_STATE | grep -q SKIP_PAGER; check "skip_taskbar and skip_pager set by the app are kept (the panel needs them)" $?
+wmctrl -i -r "$S1" -b add,demands_attention 2>/dev/null; wmctrl -i -r "$S1" -b remove,skip_pager; sec 0.5
+xprop -id "$S1" _NET_WM_STATE | grep -q SKIP_TASKBAR && ! xprop -id "$S1" _NET_WM_STATE | grep -q SKIP_PAGER; check "client messages add and remove such states" $?
+stop_clients
+newwin s2 -t "Starts above and sticky" -w 300 -h 200 -c 888888 -s 60 -p 400,300 -S above,sticky; S2=$LAST_ID
+xprop -id "$S2" _NET_WM_STATE | grep -q ABOVE && [ "$(deskof "$S2")" = "4294967295" ]; check "an app that starts above and on all desktops is honoured" $?
+stop_clients
+
 stop_wm
 
 echo

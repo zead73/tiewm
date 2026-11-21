@@ -5,6 +5,7 @@ program testwin;
     testwin [-t title] [-w width] [-h height] [-c rrggbb] [-s seconds]
             [-m minw,minh] [-p x,y]   program-specified position (USPosition)
             [-T newtitle,afterseconds]  change the title later
+            [-S state[,state...]]     initial _NET_WM_STATE: modal skip_taskbar skip_pager above below sticky demands_attention
             [-I rrggbb[:size][,rrggbb[:size]...]]  set _NET_WM_ICON (solid squares)
             [-J rrggbb,seconds]       replace the icon later (32x32)
             [-C instance,class]       set WM_CLASS
@@ -32,7 +33,7 @@ var
   WinType: string;
   MotifMode, MotifLater: string;
   ClassInst, ClassName: string;
-  IconSpec, IconLater: string;
+  IconSpec, IconLater, StateSpec: string;
   IconAfter: Integer;
   IconChanged: Boolean;
   CHint: TXClassHint;
@@ -54,6 +55,28 @@ procedure Say(const Msg: string);
 begin
   WriteLn(Msg);
   Flush(Output);
+end;
+
+procedure SetStates(Dpy: PDisplay; Win: TWindow; const Spec: string);
+var
+  Parts: TStringList;
+  Arr: array of TAtom;
+  I: Integer;
+begin
+  Parts := TStringList.Create;
+  try
+    Parts.Delimiter := ',';
+    Parts.StrictDelimiter := True;
+    Parts.DelimitedText := Spec;
+    SetLength(Arr, Parts.Count);
+    for I := 0 to Parts.Count - 1 do
+      Arr[I] := XInternAtom(Dpy, PChar('_NET_WM_STATE_' + UpperCase(Parts[I])), 0);
+    if Length(Arr) > 0 then
+      XChangeProperty(Dpy, Win, XInternAtom(Dpy, '_NET_WM_STATE', 0), XA_ATOM, 32, PropModeReplace,
+        PByte(@Arr[0]), Length(Arr));
+  finally
+    Parts.Free;
+  end;
 end;
 
 procedure SetIcons(Dpy: PDisplay; Win: TWindow; const Spec: string);
@@ -114,7 +137,7 @@ begin
   IconifyAfter := -1; ParentId := 0; Iconified := False; WinType := '';
   MotifMode := ''; MotifLater := ''; MotifAfter := 0; MotifChanged := False;
   ClassInst := ''; ClassName := '';
-  IconSpec := ''; IconLater := ''; IconAfter := 0; IconChanged := False;
+  StateSpec := ''; IconSpec := ''; IconLater := ''; IconAfter := 0; IconChanged := False;
   I := 1;
   while I <= ParamCount do
   begin
@@ -139,6 +162,7 @@ begin
       end
       else if Opt = '-y' then WinType := S
       else if Opt = '-D' then MotifMode := S
+      else if Opt = '-S' then StateSpec := S
       else if Opt = '-I' then IconSpec := S
       else if Opt = '-J' then
       begin
@@ -181,6 +205,7 @@ begin
   if ParentId <> 0 then XSetTransientForHint(Dpy, Win, ParentId);
   if MotifMode <> '' then SetMotif(Dpy, Win, MotifMode);
   if IconSpec <> '' then SetIcons(Dpy, Win, IconSpec);
+  if StateSpec <> '' then SetStates(Dpy, Win, StateSpec);
   if ClassName <> '' then
   begin
     CHint.res_name := PChar(ClassInst);

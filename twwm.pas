@@ -23,7 +23,8 @@ type
     IgnoreUnmap: Integer;         { unmaps we caused ourselves }
     InputHint, HasDelete, HasTakeFocus: Boolean;
     MinW, MinH, MaxW, MaxH, IncW, IncH, BaseW, BaseH: Integer;   { client sizes }
-    Maximized, Fullscreen, Iconic, Above, Below, Shaded: Boolean;
+    Maximized, Fullscreen, Iconic, Above, Below, Shaded, Modal: Boolean;
+    Extra: array of TAtom;        { other _NET_WM_STATE atoms the app set (skip_taskbar...): kept as they are }
     Decorated: Boolean;           { False: no frame graphics at all (the app draws its own) }
     ResName, ResClass: string;    { WM_CLASS: instance and class }
     Icon: TImg;                   { scaled _NET_WM_ICON for the menu button, nil = none set }
@@ -79,7 +80,7 @@ type
     aSupported, aNetWmName, aActive, aClientList, aClientListStk, aFrameExtents: TAtom;
     aNetWmState, aMaxVert, aMaxHorz, aCloseWindow, aWindowType: TAtom;
     aTypeDock, aTypeDesktop, aTypeMenu, aTypeDropdown, aTypePopup, aTypeTooltip, aTypeNotification, aTypeCombo, aTypeDnd: TAtom;
-    aHidden, aFullscreen, aWmDesktop, aBelow, aAbove, aShaded, aSticky, aDeskNames, aMotif, aNetWmIcon: TAtom;
+    aHidden, aFullscreen, aWmDesktop, aBelow, aAbove, aShaded, aSticky, aDeskNames, aMotif, aNetWmIcon, aModal, aSkipTaskbar, aSkipPager, aDemandsAttn: TAtom;
     aStrut, aStrutPartial, aNumDesktops, aCurDesktop, aWorkarea, aDeskGeom, aDeskViewport, aSupportingCheck: TAtom;
     { drag state }
     FDrag: TDragKind;
@@ -149,6 +150,11 @@ type
     procedure SetShaded(C: TClient; On: Boolean);
     function WantsDecorations(Win: TWindow): Boolean;
     procedure ReadClass(C: TClient);
+    procedure ReadStates(C: TClient; out Sticky: Boolean);
+    function ExtraHas(C: TClient; A: TAtom): Boolean;
+    procedure ExtraSet(C: TClient; A: TAtom; On: Boolean);
+    function ModalBlocker(C: TClient): TClient;
+    function ResolveModal(C: TClient): TClient;
     procedure ReadIcon(C: TClient);
     function ShowIcon: Boolean;
     procedure SetHover(C: TClient; L: Char);
@@ -396,6 +402,10 @@ begin
   aShaded := A('_NET_WM_STATE_SHADED');
   aMotif := A('_MOTIF_WM_HINTS');
   aNetWmIcon := A('_NET_WM_ICON');
+  aModal := A('_NET_WM_STATE_MODAL');
+  aSkipTaskbar := A('_NET_WM_STATE_SKIP_TASKBAR');
+  aSkipPager := A('_NET_WM_STATE_SKIP_PAGER');
+  aDemandsAttn := A('_NET_WM_STATE_DEMANDS_ATTENTION');
   aSticky := A('_NET_WM_STATE_STICKY');
   aDeskNames := A('_NET_DESKTOP_NAMES');
   aStrut := A('_NET_WM_STRUT'); aStrutPartial := A('_NET_WM_STRUT_PARTIAL');
@@ -731,7 +741,7 @@ procedure TWM.SetupEwmh;
 var
   Sup: array of culong;
   Name: string;
-  Atoms: array[0..20] of TAtom;
+  Atoms: array[0..24] of TAtom;
   Names: string;
   Zero: array of culong;
   I: Integer;
@@ -747,6 +757,7 @@ begin
   Atoms[11] := aNumDesktops; Atoms[12] := aCurDesktop; Atoms[13] := aWorkarea;
   Atoms[14] := aHidden; Atoms[15] := aFullscreen; Atoms[16] := aWmDesktop;
   Atoms[17] := aSticky; Atoms[18] := aDeskNames; Atoms[19] := aAbove; Atoms[20] := aShaded;
+  Atoms[21] := aModal; Atoms[22] := aSkipTaskbar; Atoms[23] := aSkipPager; Atoms[24] := aDemandsAttn;
   SetLength(Sup, Length(Atoms));
   for I := 0 to High(Atoms) do Sup[I] := Atoms[I];
   SetCards(FRoot, aSupported, Sup);
@@ -806,21 +817,124 @@ end;
 
 procedure TWM.UpdateNetState(C: TClient);
 var
-  V: array[0..7] of TAtom;
-  N: Integer;
+  V: array of TAtom;
+  I: Integer;
+
+  procedure Put(A: TAtom);
+  begin
+    SetLength(V, Length(V) + 1);
+    V[High(V)] := A;
+  end;
+
 begin
-  N := 0;
-  if C.Below then begin V[N] := aBelow; Inc(N); end;
-  if C.Shaded then begin V[N] := aShaded; Inc(N); end;
-  if C.Above then begin V[N] := aAbove; Inc(N); end;
-  if C.Desktop < 0 then begin V[N] := aSticky; Inc(N); end;
-  if C.Maximized then begin V[N] := aMaxVert; Inc(N); V[N] := aMaxHorz; Inc(N); end;
-  if C.Fullscreen then begin V[N] := aFullscreen; Inc(N); end;
-  if C.Iconic then begin V[N] := aHidden; Inc(N); end;
-  if N = 0 then
+  SetLength(V, 0);
+  if C.Modal then Put(aModal);
+  if C.Below then Put(aBelow);
+  if C.Shaded then Put(aShaded);
+  if C.Above then Put(aAbove);
+  if C.Desktop < 0 then Put(aSticky);
+  if C.Maximized then begin Put(aMaxVert); Put(aMaxHorz); end;
+  if C.Fullscreen then Put(aFullscreen);
+  if C.Iconic then Put(aHidden);
+  for I := 0 to High(C.Extra) do Put(C.Extra[I]);
+  if Length(V) = 0 then
     XDeleteProperty(FDpy, C.Win, aNetWmState)
   else
-    XChangeProperty(FDpy, C.Win, aNetWmState, XA_ATOM, 32, PropModeReplace, PByte(@V[0]), N);
+    XChangeProperty(FDpy, C.Win, aNetWmState, XA_ATOM, 32, PropModeReplace, PByte(@V[0]), Length(V));
+end;
+
+function TWM.ExtraHas(C: TClient; A: TAtom): Boolean;
+var
+  I: Integer;
+begin
+  for I := 0 to High(C.Extra) do
+    if C.Extra[I] = A then Exit(True);
+  Result := False;
+end;
+
+procedure TWM.ExtraSet(C: TClient; A: TAtom; On: Boolean);
+var
+  I, N: Integer;
+begin
+  if On then
+  begin
+    if ExtraHas(C, A) then Exit;
+    SetLength(C.Extra, Length(C.Extra) + 1);
+    C.Extra[High(C.Extra)] := A;
+  end
+  else
+  begin
+    N := 0;
+    for I := 0 to High(C.Extra) do
+      if C.Extra[I] <> A then
+      begin
+        C.Extra[N] := C.Extra[I];
+        Inc(N);
+      end;
+    SetLength(C.Extra, N);
+  end;
+end;
+
+{ The states an application sets before mapping its window. Everything tiewm does not manage itself
+  (skip_taskbar, skip_pager, demands_attention, ...) is remembered and written back, so the panel
+  still sees it. Fullscreen/maximized/shaded/hidden are requested by client message after mapping. }
+procedure TWM.ReadStates(C: TClient; out Sticky: Boolean);
+var
+  L: TList;
+  I: Integer;
+  A: TAtom;
+begin
+  Sticky := False;
+  SetLength(C.Extra, 0);
+  L := GetAtoms(C.Win, aNetWmState);
+  try
+    for I := 0 to L.Count - 1 do
+    begin
+      A := TAtom(PtrUInt(L[I]));
+      if A = aModal then C.Modal := True
+      else if A = aAbove then C.Above := True
+      else if A = aBelow then C.Below := True
+      else if A = aSticky then Sticky := True
+      else if (A = aMaxVert) or (A = aMaxHorz) or (A = aFullscreen) or (A = aShaded) or (A = aHidden) then
+      begin
+        { not honoured at map time }
+      end
+      else ExtraSet(C, A, True);
+    end;
+    if C.Above and C.Below then C.Below := False;
+  finally
+    L.Free;
+  end;
+end;
+
+{ A modal dialog blocks the window it is transient for: that window cannot be focused while the
+  dialog is up (focus goes to the dialog), and clicks on it are swallowed. }
+function TWM.ModalBlocker(C: TClient): TClient;
+var
+  I: Integer;
+  M: TClient;
+begin
+  for I := FClients.Count - 1 downto 0 do
+  begin
+    M := TClient(FClients[I]);
+    if (M <> C) and M.Modal and (M.Transient = C.Win) and (not M.Iconic) and OnDesk(M) then Exit(M);
+  end;
+  Result := nil;
+end;
+
+{ follows a chain of modal dialogs (dialog over dialog over the main window) to the top one }
+function TWM.ResolveModal(C: TClient): TClient;
+var
+  B: TClient;
+  Depth: Integer;
+begin
+  Result := C;
+  for Depth := 1 to 8 do
+  begin
+    B := ModalBlocker(Result);
+    if B = nil then Exit;
+    Result := B;
+  end;
 end;
 
 procedure TWM.ReadHints(C: TClient);
@@ -1055,6 +1169,7 @@ var
   C: TClient;
   E: TExt;
   RuleTb: Boolean;
+  StickyInit: Boolean;
   Sz: TXSizeHints;
   Supplied: clong;
   HasPos: Boolean;
@@ -1097,6 +1212,7 @@ begin
   C.Name := ReadName(Win);
   ReadHints(C);
   ReadClass(C);
+  ReadStates(C, StickyInit);
   ReadIcon(C);
   C.Decorated := WantsDecorations(Win);
   { a rule from the config file (matched by WM_CLASS) beats the app's own hints }
@@ -1109,7 +1225,8 @@ begin
   C.Desktop := ReadDesktopProp(Win);
   if C.Desktop = -2 then
   begin
-    if FindClient(C.Transient) <> nil then C.Desktop := FindClient(C.Transient).Desktop
+    if StickyInit then C.Desktop := -1
+    else if FindClient(C.Transient) <> nil then C.Desktop := FindClient(C.Transient).Desktop
     else C.Desktop := FCurDesk;
   end;
   CW := Atr.width; CH := Atr.height;
@@ -1155,6 +1272,7 @@ begin
   Log(Format('managed 0x%x "%s" frame 0x%x at %d,%d %dx%d%s', [Win, C.Name, C.Frame, C.X, C.Y, C.W, C.H,
     IfThen(C.Decorated, '', ' (no decorations)')]));
   if (not Startup) and OnDesk(C) then FocusClient(C, CurrentTime);
+  if C.Above or C.Below then Restack;
 end;
 
 procedure TWM.Unmanage(C: TClient; Destroyed: Boolean);
@@ -1233,6 +1351,7 @@ var
   Ev: TXEvent;
 begin
   if C = nil then Exit;
+  C := ResolveModal(C);        { a window with a modal dialog open cannot take the focus }
   Old := FFocused;
   FFocused := C;
   FMru.Remove(C);
@@ -2212,7 +2331,10 @@ begin
     end;
     FocusClient(C, Ev.time);
     RaiseClient(C);
-    XAllowEvents(FDpy, ReplayPointer, Ev.time);
+    if ModalBlocker(C) <> nil then
+      XAllowEvents(FDpy, AsyncPointer, Ev.time)     { blocked by a modal dialog: the app never sees the click }
+    else
+      XAllowEvents(FDpy, ReplayPointer, Ev.time);
     Exit;
   end;
   C := FindFrame(Ev.window);
@@ -2391,6 +2513,29 @@ begin
           Want := not C.Maximized;
         end;
         if Want <> C.Maximized then ToggleMaximize(C);
+      end
+      else if A = aModal then
+      begin
+        case Act of
+          0: Want := False;
+          1: Want := True;
+        else
+          Want := not C.Modal;
+        end;
+        C.Modal := Want;
+        UpdateNetState(C);
+        if Want then FocusClient(C, CurrentTime);
+      end
+      else if (A = aSkipTaskbar) or (A = aSkipPager) or (A = aDemandsAttn) then
+      begin
+        case Act of
+          0: Want := False;
+          1: Want := True;
+        else
+          Want := not ExtraHas(C, A);
+        end;
+        ExtraSet(C, A, Want);
+        UpdateNetState(C);
       end
       else if A = aShaded then
       begin

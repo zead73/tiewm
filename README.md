@@ -33,7 +33,7 @@ Run it ONLY on a display you mean to manage: `DISPLAY=:99 ./tiewm` (it refuses t
 the root; `TIEWM_THEME`, `TIEWM_FONT`, `TIEWM_DEBUG=1` are the only settings so far). SIGTERM/SIGINT hand all
 windows back to the root cleanly.
 
-Works (233 scenario checks, `tools/wmtest.sh`, scratch Xvfb on :99 only): manage/adopt/unmanage, centred
+Works (252 scenario checks, `tools/wmtest.sh`, scratch Xvfb on :99 only): manage/adopt/unmanage, centred
 placement (honours USPosition), themed frames with shape, click-to-focus with click replay to the app,
 raise on click, active/inactive repaint, title updates, titlebar drag and Alt+drag (also with Num/Caps Lock),
 Alt+right-drag resize, edge/corner resize with min-size and size-increment hints, close button
@@ -62,6 +62,18 @@ appears/disappears, the client stays where it is). Undecorated windows still mov
 Alt+right-drag or Alt+F8, maximize/fullscreen/close/menu (Alt+space) as usual; Shade is disabled for them.
 The window menu's "No titlebar" entry (Alt+space opens it on an undecorated window) turns the frame off or on for any
 window by hand; the client never moves, and a titlebar that would land above the work area pushes the window down.
+
+Modal dialogs: a transient window with `_NET_WM_STATE_MODAL` (set at map time or by client message) blocks the window it
+is transient for: focusing that window (click on its client area or titlebar, taskbar/`_NET_ACTIVE_WINDOW`, Alt+Tab,
+desktop switch) puts the focus on the dialog instead, a click in its client area is swallowed (the app never sees it),
+chains (dialog over dialog) go to the topmost one, and closing the dialog hands the focus back. Not modal = no blocking.
+Only transient-for blocking is implemented (no WM_CLIENT_LEADER group blocking for modal windows without a parent).
+
+Window states set by the app: `modal`, `above`, `below`, `sticky` at map time are honoured, and everything tiewm does not
+manage itself (`skip_taskbar`, `skip_pager`, `demands_attention`, anything unknown) is kept and written back instead of
+being wiped, so lxqt-panel still hides skip_taskbar windows. skip_taskbar/skip_pager/demands_attention/modal can also be
+changed by client message afterwards. (fullscreen/maximized/shaded/hidden requested in the initial property are not
+applied at map time; apps ask for those by client message after mapping.)
 
 App icon: the window's icon (`_NET_WM_ICON`: the smallest size that is at least 16 px, else the biggest, area-averaged
 down or up to 16x16 and centred on the menu button) is drawn there when the theme asks for it (`show_app_icon` in the
@@ -145,7 +157,7 @@ unless every window has `_NET_WM_DESKTOP`.
      optional `undecorated_border = N` config setting adds a thin N-pixel resize border (drag an edge or corner).
 
 Deliberately not done: other key bindings, `--replace`,
-multi-monitor, modal dialogs, adopting windows that are
+multi-monitor, adopting windows that are
 iconic when the WM starts, session
 management, gravity/transient-for handling, `_NET_WM_MOVERESIZE`. Not yet run against the real LXQt
 session or lxqt-panel.
