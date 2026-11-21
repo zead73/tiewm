@@ -16,7 +16,7 @@ Step 1, the xfwm4 theme engine, is done as far as it can be tested without an X 
 - `tools/testwin.pas` – test client (logs ConfigureNotify/clicks/focus/WM_DELETE, optional min size,
   USPosition, delayed title change); `tools/xdo.pas` – fake input via XTest; `tools/xgeom.pas` – window
   tree / root-relative geometry dump; `tools/wmtest.sh` – the scenario suite; `tools/paintbench.pas` –
-  paint timing (2560x1440 frame: ~31 ms).
+  paint timing (2560x1440 frame: ~2 ms; was ~31 ms before only the border strips were converted).
 
 Step 2, title text and shape, is also done (needs a display; tested in Xvfb):
 

@@ -19,9 +19,14 @@ type
   TImg = class
   private
     FW, FH: Integer;
-    FPix: array of LongWord;
+    FPix: PLongWord;
   public
     constructor Create(AW, AH: Integer);
+    { Like Create, but only the area outside the rectangle CX,CY,CW,CH is zeroed
+      (and so usable); the inside is left uninitialised and must not be read.
+      Big untouched interiors then cost no time and no memory traffic. }
+    constructor CreateBorder(AW, AH, CX, CY, CW, CH: Integer);
+    destructor Destroy; override;
     function InBounds(X, Y: Integer): Boolean;
     function Get(X, Y: Integer): LongWord;
     procedure SetPx(X, Y: Integer; C: LongWord);
@@ -73,12 +78,43 @@ begin
   inherited Create;
   FW := AW;
   FH := AH;
-  SetLength(FPix, AW * AH);
+  FPix := nil;
+  if AW * AH > 0 then FPix := AllocMem(AW * AH * SizeOf(LongWord));
+end;
+
+constructor TImg.CreateBorder(AW, AH, CX, CY, CW, CH: Integer);
+var
+  Y, X0, X1, Y0, Y1: Integer;
+begin
+  inherited Create;
+  FW := AW;
+  FH := AH;
+  FPix := nil;
+  if AW * AH <= 0 then Exit;
+  GetMem(FPix, AW * AH * SizeOf(LongWord));
+  if (CW <= 0) or (CH <= 0) then begin FillChar(FPix^, AW * AH * SizeOf(LongWord), 0); Exit; end;
+  X0 := CX; if X0 < 0 then X0 := 0; if X0 > AW then X0 := AW;
+  X1 := CX + CW; if X1 > AW then X1 := AW; if X1 < X0 then X1 := X0;
+  Y0 := CY; if Y0 < 0 then Y0 := 0; if Y0 > AH then Y0 := AH;
+  Y1 := CY + CH; if Y1 > AH then Y1 := AH; if Y1 < Y0 then Y1 := Y0;
+  FillChar(FPix^, Y0 * AW * SizeOf(LongWord), 0);                      { rows above }
+  for Y := Y0 to Y1 - 1 do
+  begin
+    FillChar(FPix[Y * AW], X0 * SizeOf(LongWord), 0);                  { left of the interior }
+    FillChar(FPix[Y * AW + X1], (AW - X1) * SizeOf(LongWord), 0);      { right of it }
+  end;
+  FillChar(FPix[Y1 * AW], (AH - Y1) * AW * SizeOf(LongWord), 0);       { rows below }
+end;
+
+destructor TImg.Destroy;
+begin
+  if FPix <> nil then FreeMem(FPix);
+  inherited Destroy;
 end;
 
 function TImg.Raw: PLongWord;
 begin
-  if Length(FPix) = 0 then Result := nil else Result := @FPix[0];
+  Result := FPix;
 end;
 
 function TImg.InBounds(X, Y: Integer): Boolean;
@@ -100,7 +136,7 @@ procedure TImg.Clear(C: LongWord);
 var
   I: Integer;
 begin
-  for I := 0 to High(FPix) do FPix[I] := C;
+  for I := 0 to FW * FH - 1 do FPix[I] := C;
 end;
 
 procedure TImg.Blend(Src: TImg; DX, DY: Integer);

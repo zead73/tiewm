@@ -68,6 +68,11 @@ function ImgToPixmap(Dpy: PDisplay; Drawable: TDrawable; AVisual: PVisual; Depth
   client rectangle (the client window must stay visible). }
 function MaskFromImg(Dpy: PDisplay; Drawable: TDrawable; Img: TImg;
   CX, CY, CW, CH: Integer): TPixmap;
+{ ImgToPixmap, but the rectangle SX,SY,SW,SH (the client area, which the client
+  window covers) is not converted or uploaded, only filled black. Large windows
+  cost the length of their border instead of their area. }
+function ImgToPixmapSkip(Dpy: PDisplay; Drawable: TDrawable; AVisual: PVisual; Depth: Integer;
+  Img: TImg; SX, SY, SW, SH: Integer): TPixmap;
 
 implementation
 
@@ -133,10 +138,12 @@ begin
   BaseY := (M.TitleH - (Font.Ascent + Font.Descent)) div 2 + Font.Ascent + VOff;
   O.TextX := TextX;
   O.TextW := TW;
-  Img := TImg.Create(FrameW, FrameH);
+  Img := TImg.CreateBorder(FrameW, FrameH, M.LeftW, M.TitleH, FrameW - M.LeftW - M.RightW,
+    FrameH - M.TitleH - M.BottomH);
   try
     Theme.Compose(Img, St, O);
-    Result := ImgToPixmap(Dpy, Root, Vis, DefaultDepth(Dpy, Scr), Img);
+    Result := ImgToPixmapSkip(Dpy, Root, Vis, DefaultDepth(Dpy, Scr), Img, M.LeftW, M.TitleH,
+      FrameW - M.LeftW - M.RightW, FrameH - M.TitleH - M.BottomH);
     Mask := MaskFromImg(Dpy, Root, Img, M.LeftW, M.TitleH, FrameW - M.LeftW - M.RightW,
       FrameH - M.TitleH - M.BottomH);
   finally
@@ -264,59 +271,123 @@ end;
 
 function ImgToPixmap(Dpy: PDisplay; Drawable: TDrawable; AVisual: PVisual; Depth: Integer;
   Img: TImg): TPixmap;
+begin
+  Result := ImgToPixmapSkip(Dpy, Drawable, AVisual, Depth, Img, 0, 0, 0, 0);
+end;
+
+function ImgToPixmapSkip(Dpy: PDisplay; Drawable: TDrawable; AVisual: PVisual; Depth: Integer;
+  Img: TImg; SX, SY, SW, SH: Integer): TPixmap;
 var
   Buf: array of LongWord;
-  I: Integer;
   Src: PLongWord;
-  P: LongWord;
-  A, R, G, B: LongWord;
-  Im: PXImage;
   GC: TGC;
+
+  { converts and uploads the rectangle RX,RY,RW,RH of Img (premultiplied over black) }
+  procedure PutRect(RX, RY, RW, RH: Integer);
+  var
+    X, Y, N: Integer;
+    P, A, R, G, B: LongWord;
+    Im: PXImage;
+    Row: PLongWord;
+  begin
+    if (RW <= 0) or (RH <= 0) then Exit;
+    if Length(Buf) < RW * RH then SetLength(Buf, RW * RH);
+    N := 0;
+    for Y := RY to RY + RH - 1 do
+    begin
+      Row := Src + Y * Img.W;
+      for X := RX to RX + RW - 1 do
+      begin
+        P := Row[X];
+        A := P shr 24;
+        if A = 255 then Buf[N] := P and $FFFFFF
+        else if A = 0 then Buf[N] := 0
+        else
+        begin
+          R := (((P shr 16) and 255) * A + 127) div 255;
+          G := (((P shr 8) and 255) * A + 127) div 255;
+          B := ((P and 255) * A + 127) div 255;
+          Buf[N] := (R shl 16) or (G shl 8) or B;
+        end;
+        Inc(N);
+      end;
+    end;
+    Im := XCreateImage(Dpy, AVisual, Depth, ZPixmap, 0, PChar(@Buf[0]), RW, RH, 32, 0);
+    XPutImage(Dpy, Result, GC, Im, 0, 0, RX, RY, RW, RH);
+    Im^.data := nil;   { the buffer is ours, not malloc'd }
+    DestroyImg(Im);
+  end;
+
+var
+  Y0, Y1: Integer;
 begin
   if (AVisual^.red_mask <> $FF0000) or (AVisual^.green_mask <> $FF00) or (AVisual^.blue_mask <> $FF) then
     raise Exception.Create('unsupported visual pixel layout');
-  SetLength(Buf, Img.W * Img.H);
   Src := Img.Raw;
-  for I := 0 to Img.W * Img.H - 1 do
-  begin
-    P := Src[I];
-    A := P shr 24;
-    if A = 255 then Buf[I] := P and $FFFFFF
-    else if A = 0 then Buf[I] := 0
-    else
-    begin
-      R := (((P shr 16) and 255) * A + 127) div 255;
-      G := (((P shr 8) and 255) * A + 127) div 255;
-      B := ((P and 255) * A + 127) div 255;
-      Buf[I] := (R shl 16) or (G shl 8) or B;
-    end;
-  end;
   Result := XCreatePixmap(Dpy, Drawable, Img.W, Img.H, Depth);
   GC := XCreateGC(Dpy, Result, 0, nil);
-  Im := XCreateImage(Dpy, AVisual, Depth, ZPixmap, 0, PChar(@Buf[0]), Img.W, Img.H, 32, 0);
-  XPutImage(Dpy, Result, GC, Im, 0, 0, 0, 0, Img.W, Img.H);
-  Im^.data := nil;   { the buffer is ours, not malloc'd }
-  DestroyImg(Im);
+  if (SW <= 0) or (SH <= 0) then
+    PutRect(0, 0, Img.W, Img.H)
+  else
+  begin
+    Y0 := SY; if Y0 < 0 then Y0 := 0;
+    Y1 := SY + SH; if Y1 > Img.H then Y1 := Img.H;
+    XSetForeground(Dpy, GC, 0);
+    XFillRectangle(Dpy, Result, GC, SX, SY, SW, SH);
+    PutRect(0, 0, Img.W, Y0);                       { top: corners and titlebar }
+    PutRect(0, Y0, SX, Y1 - Y0);                    { left border }
+    PutRect(SX + SW, Y0, Img.W - SX - SW, Y1 - Y0); { right border }
+    PutRect(0, Y1, Img.W, Img.H - Y1);              { bottom }
+  end;
   XFreeGC(Dpy, GC);
 end;
 
 function MaskFromImg(Dpy: PDisplay; Drawable: TDrawable; Img: TImg;
   CX, CY, CW, CH: Integer): TPixmap;
 var
-  Stride, X, Y: Integer;
+  Stride, X, Y, X1: Integer;
   Bits: array of Byte;
-  On: Boolean;
+  Px: PLongWord;
+  Row: PLongWord;
+  InRow: Boolean;
 begin
   Stride := (Img.W + 7) div 8;
   SetLength(Bits, Stride * Img.H);
   FillChar(Bits[0], Length(Bits), 0);
+  Px := Img.Raw;
   for Y := 0 to Img.H - 1 do
-    for X := 0 to Img.W - 1 do
+  begin
+    Row := Px + Y * Img.W;
+    InRow := (Y >= CY) and (Y < CY + CH) and (CW > 0);
+    if InRow then
     begin
-      On := ((Img.Get(X, Y) shr 24) <> 0) or
-            ((X >= CX) and (X < CX + CW) and (Y >= CY) and (Y < CY + CH));
-      if On then Bits[Y * Stride + X div 8] := Bits[Y * Stride + X div 8] or (1 shl (X mod 8));
-    end;
+      { the client area is always on: set its bits a byte at a time, scan only the borders }
+      X := CX; if X < 0 then X := 0;
+      X1 := CX + CW; if X1 > Img.W then X1 := Img.W;
+      while (X < X1) and ((X and 7) <> 0) do
+      begin
+        Bits[Y * Stride + X div 8] := Bits[Y * Stride + X div 8] or (1 shl (X mod 8));
+        Inc(X);
+      end;
+      if X1 - X >= 8 then
+      begin
+        FillChar(Bits[Y * Stride + X div 8], (X1 - X) div 8, $FF);
+        Inc(X, ((X1 - X) div 8) * 8);
+      end;
+      while X < X1 do
+      begin
+        Bits[Y * Stride + X div 8] := Bits[Y * Stride + X div 8] or (1 shl (X mod 8));
+        Inc(X);
+      end;
+      for X := 0 to CX - 1 do
+        if (Row[X] shr 24) <> 0 then Bits[Y * Stride + X div 8] := Bits[Y * Stride + X div 8] or (1 shl (X mod 8));
+      for X := CX + CW to Img.W - 1 do
+        if (Row[X] shr 24) <> 0 then Bits[Y * Stride + X div 8] := Bits[Y * Stride + X div 8] or (1 shl (X mod 8));
+    end
+    else
+      for X := 0 to Img.W - 1 do
+        if (Row[X] shr 24) <> 0 then Bits[Y * Stride + X div 8] := Bits[Y * Stride + X div 8] or (1 shl (X mod 8));
+  end;
   Result := XCreateBitmapFromData(Dpy, Drawable, PChar(@Bits[0]), Img.W, Img.H);
 end;
 
