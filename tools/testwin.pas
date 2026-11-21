@@ -19,6 +19,7 @@ program testwin;
             [-G n]                    win_gravity 1-10 (with -p; default Static=10, 0 = leave unset = NorthWest)
             [-Q seconds]              set the WM_HINTS urgency bit after N seconds
             [-a minx:miny,maxx:maxy]  aspect-ratio hints (width:height)
+            [-L self|0xID]            set WM_CLIENT_LEADER (self = this window)
             [-H]                      hung app: ignores WM_DELETE_WINDOW and never answers _NET_WM_PING
             [-X]                      before mapping, send _NET_REQUEST_FRAME_EXTENTS and report the reply
             [-R dir]                  on a button press send _NET_WM_MOVERESIZE with that direction (0-11)
@@ -45,6 +46,9 @@ var
   MoveResizeDir, Gravity: Integer;
   AskExtents, Hang: Boolean;
   UrgentAfter: Integer;
+  LeaderSpec: string;
+  ALeader: TAtom;
+  LeaderWin: TWindow;
   UrgentDone: Boolean;
   AspSpec: string;
   WmPing: TAtom;
@@ -159,7 +163,7 @@ begin
   MotifMode := ''; MotifLater := ''; MotifAfter := 0; MotifChanged := False;
   ClassInst := ''; ClassName := '';
   StateSpec := ''; HintState := ''; UnmappedMode := ''; IconSpec := ''; IconLater := ''; IconAfter := 0; IconChanged := False;
-  MoveResizeDir := -1; Gravity := 10; AskExtents := False; Hang := False; UrgentAfter := -1; UrgentDone := False; AspSpec := '';
+  MoveResizeDir := -1; Gravity := 10; AskExtents := False; Hang := False; UrgentAfter := -1; LeaderSpec := ''; UrgentDone := False; AspSpec := '';
   I := 1;
   while I <= ParamCount do
   begin
@@ -192,6 +196,7 @@ begin
       else if Opt = '-R' then MoveResizeDir := StrToInt(S)
       else if Opt = '-G' then Gravity := StrToInt(S)
       else if Opt = '-Q' then UrgentAfter := StrToInt(S)
+      else if Opt = '-L' then LeaderSpec := S
       else if Opt = '-a' then AspSpec := S
       else if Opt = '-I' then IconSpec := S
       else if Opt = '-J' then
@@ -238,6 +243,12 @@ begin
     XSetWMNormalHints(Dpy, Win, @Hints);
   end;
   if HavePos then XMoveWindow(Dpy, Win, PosX, PosY);
+  if LeaderSpec <> '' then
+  begin
+    if LeaderSpec = 'self' then LeaderWin := Win else LeaderWin := TWindow(StrToQWord(LeaderSpec));
+    ALeader := XInternAtom(Dpy, 'WM_CLIENT_LEADER', 0);
+    XChangeProperty(Dpy, Win, ALeader, XA_WINDOW, 32, PropModeReplace, PByte(@LeaderWin), 1);
+  end;
   WmDelete := XInternAtom(Dpy, 'WM_DELETE_WINDOW', 0);
   WmProtocols := XInternAtom(Dpy, 'WM_PROTOCOLS', 0);
   WmPing := XInternAtom(Dpy, '_NET_WM_PING', 0);

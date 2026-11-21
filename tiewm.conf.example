@@ -31,6 +31,11 @@
 # those windows then resize with Alt+right-drag or Alt+F8.
 #undecorated_border = 0
 
+# click: a window gets the focus when you click it (default).  follow: the window under the pointer gets it
+# after focus_delay milliseconds (it is not raised; clicking still raises).
+#focus_mode = click
+#focus_delay = 250
+
 # The application's icon on the menu (left-most) button: auto = what the theme asks for (show_app_icon in its
 # themerc; Daloa does), true, or false.  The icon comes from the window's _NET_WM_ICON (the smallest one that is
 # at least 16 px, scaled to fit); applications that set none get a plain window glyph.
@@ -93,6 +98,9 @@
 #resize_window = Alt+F8
 # above: toggle always-on-top for the focused window (also in the window menu)
 #above = Alt+F12
+# move_to_next_monitor / move_to_prev_monitor: hop the focused window to another monitor (wraps round)
+#move_to_next_monitor = Super+Shift+Right
+#move_to_prev_monitor = Super+Shift+Left
 #
 # Direct desktop keys (none by default; Ctrl+F1..F12 are already taken by lxqt-globalkeyshortcuts):
 #goto_desktop_1 = Super+1

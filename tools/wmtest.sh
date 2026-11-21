@@ -1126,6 +1126,66 @@ import -window root "$TMP/altab.png" 2>/dev/null
 [ -z "$(ovr)" ]; check "releasing Alt closes it" $?
 stop_clients
 
+echo "== 42. move a window to the next / previous monitor (Super+Shift+Right / Left)"
+stop_wm; stop_clients
+MON=$HERE/monset
+Xvfb :97 -screen 0 2560x800x24 -nolisten tcp >/dev/null 2>&1 & XV97=$!
+sleep 1
+export DISPLAY=:97
+"$MON" 60 left=0,0,1280,800 right=1280,0,1280,800 >/dev/null 2>&1 & MONPID=$!
+sleep 0.7
+export TIEWM_CONFIG="$TMP/none.conf"; start_wm
+newwin mv -t "Hop" -w 400 -h 300 -c 55aa55 -s 120 -p 100,150 -G 10; MV=$LAST_ID
+"$XDO" move 300 300 click 1; sec 0.4
+G0=$(absgeom "$MV"); X0=$(field "$G0" x); Y0=$(field "$G0" y)
+"$XDO" keydown Super_L keydown Shift_L key Right keyup Shift_L keyup Super_L; sec 0.6
+G=$(absgeom "$MV"); [ "$(field "$G" x)" -eq $((X0+1280)) ] && [ "$(field "$G" y)" -eq "$Y0" ]; RC=$?; check "Super+Shift+Right moves it to the right monitor at the same place ($G)" $RC
+"$XDO" keydown Super_L keydown Shift_L key Right keyup Shift_L keyup Super_L; sec 0.6
+G=$(absgeom "$MV"); [ "$(field "$G" x)" -eq "$X0" ]; RC=$?; check "again: wraps round to the first monitor ($G)" $RC
+"$XDO" keydown Super_L keydown Shift_L key Left keyup Shift_L keyup Super_L; sec 0.6
+G=$(absgeom "$MV"); [ "$(field "$G" x)" -eq $((X0+1280)) ]; RC=$?; check "Super+Shift+Left goes the other way ($G)" $RC
+"$XDO" keydown Super_L key Return keyup Super_L; sec 0.6
+"$XDO" keydown Super_L keydown Shift_L key Left keyup Shift_L keyup Super_L; sec 0.6
+G=$(absgeom "$MV"); [ "$(field "$G" x)" -eq $M ] && [ "$(field "$G" w)" -eq $((1280-2*M)) ]; RC=$?; check "a maximized window arrives maximized on the other monitor ($G)" $RC
+stop_clients
+stop_wm
+kill "$MONPID" 2>/dev/null; wait "$MONPID" 2>/dev/null
+kill "$XV97" 2>/dev/null; wait "$XV97" 2>/dev/null
+export DISPLAY=:99
+
+echo "== 43. focus follows the mouse (focus_mode = follow)"
+stop_wm; stop_clients
+printf '[general]\nfocus_mode = follow\nfocus_delay = 150\n' > "$TMP/c43.conf"
+export TIEWM_CONFIG="$TMP/c43.conf"; start_wm
+newwin fa -t "Follow A" -w 300 -h 200 -c cc7755 -s 120 -p 100,200 -G 10; FA=$LAST_ID
+newwin fb -t "Follow B" -w 300 -h 200 -c 5577cc -s 120 -p 600,200 -G 10; FB=$LAST_ID
+"$XDO" move 250 300; sec 0.7
+[ "$(hexnorm "$(active)")" = "$(hexnorm "$FA")" ]; RC=$?; check "pointer over A for longer than the delay: A has the focus" $RC
+"$XDO" move 750 300; sec 0.7
+[ "$(hexnorm "$(active)")" = "$(hexnorm "$FB")" ]; RC=$?; check "pointer over B: B has the focus, without a click" $RC
+"$XDO" move 250 300 sleep 40 move 750 300; sec 0.7
+[ "$(hexnorm "$(active)")" = "$(hexnorm "$FB")" ]; RC=$?; check "passing over A faster than the delay does not focus it" $RC
+"$XDO" move 1100 700; sec 0.5
+[ "$(hexnorm "$(active)")" = "$(hexnorm "$FB")" ]; RC=$?; check "moving onto the bare desktop keeps the focus where it was" $RC
+stop_clients
+export TIEWM_CONFIG="$TMP/none.conf"
+stop_wm
+
+echo "== 44. group modality: a modal window with no parent blocks its WM_CLIENT_LEADER group"
+stop_wm; stop_clients
+export TIEWM_CONFIG="$TMP/none.conf"; start_wm
+newwin gm -t "Group main" -w 500 -h 400 -c 335577 -s 120 -p 100,100 -L self; GM=$LAST_ID
+newwin go -t "Unrelated" -w 300 -h 200 -c 557733 -s 120 -p 800,100; GO=$LAST_ID
+newwin gd -t "Group dialog" -w 250 -h 150 -c aa8833 -s 120 -p 800,400 -L "$GM" -S modal; GD=$LAST_ID
+"$XDO" move 300 300 click 1; sec 0.6
+[ "$(hexnorm "$(active)")" = "$(hexnorm "$GD")" ]; RC=$?; check "clicking the group's main window focuses its modal dialog instead" $RC
+"$XDO" move 900 150 click 1; sec 0.6
+[ "$(hexnorm "$(active)")" = "$(hexnorm "$GO")" ]; RC=$?; check "a window outside the group is not blocked" $RC
+wmctrl -i -r "$GD" -b remove,modal; sec 0.6
+"$XDO" move 300 300 click 1; sec 0.6
+[ "$(hexnorm "$(active)")" = "$(hexnorm "$GM")" ]; RC=$?; check "once the dialog is no longer modal the main window takes the focus again" $RC
+stop_clients
+
 stop_wm
 
 echo

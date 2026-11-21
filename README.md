@@ -33,7 +33,7 @@ Run it ONLY on a display you mean to manage: `DISPLAY=:99 ./tiewm` (it refuses t
 the root; `TIEWM_THEME`, `TIEWM_FONT`, `TIEWM_DEBUG=1` are the only settings so far). SIGTERM/SIGINT hand all
 windows back to the root cleanly.
 
-Works (317 scenario checks, `tools/wmtest.sh`, scratch Xvfb on :99 only): manage/adopt/unmanage, centred
+Works (328 scenario checks, `tools/wmtest.sh`, scratch Xvfb on :99 only): manage/adopt/unmanage, centred
 placement (honours USPosition), themed frames with shape, click-to-focus with click replay to the app,
 raise on click, active/inactive repaint, title updates, titlebar drag and Alt+drag (also with Num/Caps Lock),
 Alt+right-drag resize, edge/corner resize with min-size and size-increment hints, close button
@@ -168,6 +168,13 @@ the `WM_HINTS` urgency bit (shown as `_NET_WM_STATE_DEMANDS_ATTENTION` for the p
 Alt+F12 (`above`: always on top), and an Alt+Tab list: while Alt is held a list of the windows in cycling order is drawn over the
 middle of the monitor the pointer is on (selected row highlighted, minimized windows dimmed and marked, titles ellipsized); it uses
 the menu font and the palette. No thumbnails.
+
+More: Super+Shift+Right / Left (`move_to_next_monitor` / `move_to_prev_monitor`) hop the focused window to the next or previous
+monitor (wrapping), keeping its place relative to the monitor's corner; maximized and fullscreen windows refit. Optional focus
+follows the mouse (`focus_mode = follow`, `focus_delay` ms, default 250): the window under the pointer is focused after the delay, not
+raised, and a pass-through shorter than the delay does nothing; bare desktop keeps the focus. Group modality: a modal window with no
+`WM_TRANSIENT_FOR` blocks the other windows that share its `WM_CLIENT_LEADER` (the main window and its siblings), like a
+transient one blocks its parent.
 
 Careful when testing: the live session runs a process called `tiewm` too, so test scripts must never `pkill` by name
 (`wmtest.sh` only signals a tiewm whose DISPLAY is :99).

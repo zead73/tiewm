@@ -27,7 +27,7 @@ uses
 
 type
   TKeyAction = (kaClose, kaCycle, kaCycleBack, kaMaximize, kaIconify, kaFullscreen,
-    kaDeskLeft, kaDeskRight, kaMoveLeft, kaMoveRight, kaWindowMenu, kaShade, kaMoveWindow, kaResizeWindow, kaGotoDesk, kaMoveToDesk, kaAbove);
+    kaDeskLeft, kaDeskRight, kaMoveLeft, kaMoveRight, kaWindowMenu, kaShade, kaMoveWindow, kaResizeWindow, kaGotoDesk, kaMoveToDesk, kaAbove, kaMonitorNext, kaMonitorPrev);
 
   TKeyBinding = record
     Sym: TKeySym;
@@ -51,6 +51,8 @@ type
     NumDesktops: Integer;
     ShowAppIcon: Integer;          { -1 = what the theme says, 0 = never, 1 = always }
     UndecoratedBorder: Integer;    { px of resize border around windows without a titlebar, 0 = none }
+    FocusFollows: Boolean;         { focus the window under the pointer after FocusDelay ms (default: click to focus) }
+    FocusDelay: Integer;
     FontGreyscale: Boolean;
     FontHinting: Integer;          { 0..3, -1 = leave to fontconfig }
     Palette: TThemePalette;
@@ -86,7 +88,7 @@ implementation
 const
   ActionNames: array[TKeyAction] of string = ('close', 'cycle', 'cycle_back', 'maximize',
     'iconify', 'fullscreen', 'desktop_left', 'desktop_right', 'move_left', 'move_right',
-    'window_menu', 'shade', 'move_window', 'resize_window', 'goto_desktop_', 'move_to_desktop_', 'above');
+    'window_menu', 'shade', 'move_window', 'resize_window', 'goto_desktop_', 'move_to_desktop_', 'above', 'move_to_next_monitor', 'move_to_prev_monitor');
 
 procedure Warn(var C: TConfig; const Msg: string);
 begin
@@ -134,6 +136,8 @@ begin
   Result.TitleAlign := 'left';
   Result.NumDesktops := 4;
   Result.UndecoratedBorder := 0;
+  Result.FocusFollows := False;
+  Result.FocusDelay := 250;
   Result.ShowAppIcon := -1;
   Result.FontGreyscale := True;
   Result.FontHinting := 3;
@@ -159,6 +163,8 @@ begin
   AddBinding(Result, kaMoveWindow, 0, 'Alt+F7');
   AddBinding(Result, kaResizeWindow, 0, 'Alt+F8');
   AddBinding(Result, kaAbove, 0, 'Alt+F12');
+  AddBinding(Result, kaMonitorNext, 0, 'Super+Shift+Right');
+  AddBinding(Result, kaMonitorPrev, 0, 'Super+Shift+Left');
 end;
 
 
@@ -557,6 +563,18 @@ begin
     else if ParseBool(V, B) then C.ShowAppIcon := Ord(B)
     else Warn(C, Format('line %d: show_app_icon must be auto, true or false, not "%s"', [Line, V]));
   end
+  else if K = 'focus_mode' then
+  begin
+    if LowerCase(V) = 'click' then C.FocusFollows := False
+    else if (LowerCase(V) = 'follow') or (LowerCase(V) = 'follow_mouse') then C.FocusFollows := True
+    else Warn(C, Format('line %d: focus_mode must be click or follow, not "%s"', [Line, V]));
+  end
+  else if K = 'focus_delay' then
+  begin
+    N := StrToIntDef(V, -1);
+    if (N >= 0) and (N <= 3000) then C.FocusDelay := N
+    else Warn(C, Format('line %d: focus_delay must be 0..3000 milliseconds, not "%s"', [Line, V]));
+  end
   else if K = 'undecorated_border' then
   begin
     N := StrToIntDef(V, -1);
@@ -730,6 +748,8 @@ begin
     'button_layout = ' + C.ButtonLayout + #10 + 'title_align = ' + C.TitleAlign + #10 +
     'desktops = ' + IntToStr(C.NumDesktops) + #10 +
     'undecorated_border = ' + IntToStr(C.UndecoratedBorder) + #10 +
+    'focus_mode = ' + IfThen(C.FocusFollows, 'follow', 'click') + #10 +
+    'focus_delay = ' + IntToStr(C.FocusDelay) + #10 +
     'show_app_icon = ' + IfThen(C.ShowAppIcon < 0, 'auto', BoolToStr(C.ShowAppIcon = 1, 'true', 'false')) + #10 +
     'font_greyscale = ' + BoolToStr(C.FontGreyscale, 'true', 'false') + #10 +
     'font_hinting = ' + IntToStr(C.FontHinting) + #10 +

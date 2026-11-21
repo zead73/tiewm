@@ -26,6 +26,7 @@ type
     PingTick: Int64;              { our own clock (ms) when it was sent }
     MinW, MinH, MaxW, MaxH, IncW, IncH, BaseW, BaseH: Integer;   { client sizes }
     MinAspX, MinAspY, MaxAspX, MaxAspY: Integer;                  { aspect-ratio limits (width:height), 0 = none }
+    Leader: TWindow;              { WM_CLIENT_LEADER: the window that names this window's group, 0 = none }
     UrgentHint: Boolean;          { WM_HINTS urgency bit is set }
     Gravity: Integer;             { ICCCM win_gravity: 1 NorthWest (default) .. 9 SouthEast, 10 Static }
     Maximized, Fullscreen, Iconic, Above, Below, Shaded, Modal, StartIconic: Boolean;
@@ -91,7 +92,7 @@ type
     aNetWmState, aMaxVert, aMaxHorz, aCloseWindow, aWindowType: TAtom;
     aTypeDock, aTypeDesktop, aTypeMenu, aTypeDropdown, aTypePopup, aTypeTooltip, aTypeNotification, aTypeCombo, aTypeDnd: TAtom;
     aHidden, aFullscreen, aWmDesktop, aBelow, aAbove, aShaded, aSticky, aDeskNames, aMotif, aNetWmIcon, aModal, aSkipTaskbar, aSkipPager, aDemandsAttn: TAtom;
-    aPing, aMoveResize, aMoveResizeWin, aAllowed, aReqExtents, aTypeSplash: TAtom;
+    aPing, aClientLeader, aMoveResize, aMoveResizeWin, aAllowed, aReqExtents, aTypeSplash: TAtom;
     FActions: array[0..11] of TAtom;
     aStrut, aStrutPartial, aNumDesktops, aCurDesktop, aWorkarea, aDeskGeom, aDeskViewport, aSupportingCheck: TAtom;
     { drag state }
@@ -113,6 +114,8 @@ type
     FCycling: Boolean;
     FCycleList: TList;
     FCycleIdx: Integer;
+    FFocusCand: TClient;     { focus-follows-mouse: the window the pointer entered, waiting for its delay }
+    FFocusDue: Int64;
     FCycleWin: TWindow;      { the Alt+Tab list while cycling, 0 = not shown }
     FPressClient: TClient;
     FPressLetter: Char;
@@ -153,6 +156,9 @@ type
     function MonitorOf(C: TClient): Integer;
     function PointerMonitor: Integer;
     procedure OnScreenChange(var Ev: TXEvent);
+    procedure MoveToMonitor(C: TClient; Dir: Integer);
+    procedure OnEnter(var Ev: TXCrossingEvent);
+    procedure PollFocusFollow;
     function FindClient(Win: TWindow): TClient;
     function FindFrame(Frame: TWindow): TClient;
     procedure Manage(Win: TWindow; Startup: Boolean);
@@ -444,6 +450,7 @@ begin
   aDemandsAttn := A('_NET_WM_STATE_DEMANDS_ATTENTION');
   aMoveResize := A('_NET_WM_MOVERESIZE'); aMoveResizeWin := A('_NET_MOVERESIZE_WINDOW');
   aPing := A('_NET_WM_PING');
+  aClientLeader := A('WM_CLIENT_LEADER');
   aAllowed := A('_NET_WM_ALLOWED_ACTIONS'); aReqExtents := A('_NET_REQUEST_FRAME_EXTENTS');
   aTypeSplash := A('_NET_WM_WINDOW_TYPE_SPLASH');
   FActions[0] := A('_NET_WM_ACTION_MOVE'); FActions[1] := A('_NET_WM_ACTION_RESIZE');
@@ -1108,7 +1115,12 @@ begin
   for I := FClients.Count - 1 downto 0 do
   begin
     M := TClient(FClients[I]);
-    if (M <> C) and M.Modal and (M.Transient = C.Win) and (not M.Iconic) and OnDesk(M) then Exit(M);
+    if (M <> C) and M.Modal and (not M.Iconic) and OnDesk(M) then
+    begin
+      if M.Transient = C.Win then Exit(M);
+      { a modal window that names no parent blocks the rest of its group (same WM_CLIENT_LEADER) }
+      if (M.Transient = 0) and (M.Leader <> 0) and (C.Leader = M.Leader) and (C.Transient <> M.Win) then Exit(M);
+    end;
   end;
   Result := nil;
 end;
@@ -1137,6 +1149,8 @@ var
   NProt, I: cint;
   TWin: TWindow;
   Urg: Boolean;
+  LeadData: PByte;
+  LeadN: culong;
 begin
   Urg := False;
   C.MinW := 1; C.MinH := 1; C.MaxW := 65535; C.MaxH := 65535;
@@ -1179,6 +1193,13 @@ begin
     C.UrgentHint := Urg;
     ExtraSet(C, aDemandsAttn, Urg);
     if C.Frame <> 0 then UpdateNetState(C);
+  end;
+  C.Leader := 0;
+  LeadData := GetProp(C.Win, aClientLeader, XA_WINDOW, LeadN);
+  if LeadData <> nil then
+  begin
+    if LeadN >= 1 then C.Leader := PCULong(LeadData)[0];
+    XFree(LeadData);
   end;
   C.Transient := 0;
   TWin := 0;
@@ -2258,6 +2279,8 @@ begin
     kaGotoDesk: SwitchDesktop(B.Arg - 1, ATime);
     kaMoveToDesk: MoveFocusedTo(B.Arg - 1, ATime);
     kaAbove: if FFocused <> nil then SetAbove(FFocused, not FFocused.Above);
+    kaMonitorNext: if FFocused <> nil then MoveToMonitor(FFocused, 1);
+    kaMonitorPrev: if FFocused <> nil then MoveToMonitor(FFocused, -1);
   end;
 end;
 
@@ -2839,7 +2862,34 @@ var
   C: TClient;
 begin
   C := FindFrame(Ev.window);
-  if C <> nil then SetHover(C, #0);
+  if C <> nil then
+  begin
+    SetHover(C, #0);
+    if (FFocusCand = C) and (Ev.detail <> NotifyInferior) then FFocusCand := nil;
+  end;
+end;
+
+{ focus-follows-mouse: entering a window starts a timer; PollFocusFollow focuses it when it expires }
+procedure TWM.OnEnter(var Ev: TXCrossingEvent);
+var
+  C: TClient;
+begin
+  if not FCfg.FocusFollows then Exit;
+  if (Ev.mode <> NotifyNormal) or (Ev.detail = NotifyInferior) then Exit;
+  C := FindFrame(Ev.window);
+  if (C = nil) or (C = FFocused) or C.Iconic then begin FFocusCand := nil; Exit; end;
+  FFocusCand := C;
+  FFocusDue := GetTickCount64 + FCfg.FocusDelay;
+end;
+
+procedure TWM.PollFocusFollow;
+begin
+  if FFocusCand = nil then Exit;
+  if GetTickCount64 < FFocusDue then Exit;
+  if (FClients.IndexOf(FFocusCand) >= 0) and (FDrag = dgNone) and (FKbMode = kmNone) and (not FCycling) and
+     (not FMenu.IsOpen) and VisibleNow(FFocusCand) then
+    FocusClient(FFocusCand, CurrentTime);
+  FFocusCand := nil;
 end;
 
 procedure TWM.OnMotion(var Ev: TXMotionEvent);
@@ -3123,6 +3173,46 @@ begin
     ReadHints(C);
 end;
 
+{ Moves a window to the next (Dir = 1) or previous monitor, keeping its place relative to the
+  monitor's corner; maximized and fullscreen windows refit to the new monitor. }
+procedure TWM.MoveToMonitor(C: TClient; Dir: Integer);
+var
+  Src, Dst, AX, AY, AW, AH, NX, NY, NW, NH: Integer;
+begin
+  if (Length(FMon) < 2) or C.Iconic then Exit;
+  Src := MonitorOf(C);
+  Dst := ((Src + Dir) mod Length(FMon) + Length(FMon)) mod Length(FMon);
+  if Dst = Src then Exit;
+  if C.Fullscreen then
+  begin
+    C.X := FMon[Dst].X; C.Y := FMon[Dst].Y; C.W := FMon[Dst].W; C.H := FMon[Dst].H;
+    XMoveResizeWindow(FDpy, C.Frame, C.X, C.Y, C.W, C.H);
+    XMoveResizeWindow(FDpy, C.Win, 0, 0, C.W, C.H);
+    SendConfigure(C);
+    Exit;
+  end;
+  WorkAreaOf(Dst, AX, AY, AW, AH);
+  if C.Maximized then
+  begin
+    SetFrameGeometry(C, AX, AY, AW, AH);
+    Exit;
+  end;
+  NW := C.W; NH := C.H;
+  if C.Shaded then NH := C.H else
+  begin
+    if NW > AW then NW := AW;
+    if NH > AH then NH := AH;
+  end;
+  NX := FMon[Dst].X + (C.X - FMon[Src].X);
+  NY := FMon[Dst].Y + (C.Y - FMon[Src].Y);
+  if NX + NW > AX + AW then NX := AX + AW - NW;
+  if NY + NH > AY + AH then NY := AY + AH - NH;
+  if NX < AX then NX := AX;
+  if NY < AY then NY := AY;
+  SetFrameGeometry(C, NX, NY, NW, NH);
+  RaiseClient(C);
+end;
+
 { RandR says the screen layout changed (monitor plugged or unplugged, resolution changed):
   refresh the monitor list, refit fullscreen and maximized windows, and pull windows that are
   now off every monitor back onto the nearest one }
@@ -3225,6 +3315,7 @@ begin
     ButtonPress: OnButtonPress(Ev.xbutton);
     ButtonRelease: OnButtonRelease(Ev.xbutton);
     MotionNotify: OnMotion(Ev.xmotion);
+    EnterNotify: OnEnter(Ev.xcrossing);
     LeaveNotify: OnLeave(Ev.xcrossing);
     ClientMessage: OnClientMessage(Ev.xclient);
     PropertyNotify: OnProperty(Ev.xproperty);
@@ -3269,6 +3360,7 @@ begin
         [FCfg.Path, Length(FCfg.Keys), Length(NewCfg.Warnings)]));
     end;
     PollMonitors;
+    PollFocusFollow;
     XFlush(FDpy);
     fpFD_ZERO(Fds);
     fpFD_SET(Fd, Fds);
