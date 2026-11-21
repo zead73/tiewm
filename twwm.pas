@@ -31,6 +31,7 @@ type
     Icon: TImg;                   { scaled _NET_WM_ICON for the menu button, nil = none set }
     HoverLetter, PressLetter: Char;     { titlebar button under the pointer / being held down, #0 = none }
     PaintedHover, PaintedPress: Char;
+    PaintedToggled: string;
     DecorUser: Integer;           { 0 = follow the app's hints, 1 = user wants a titlebar, 2 = user wants none }
     UnshadeH: Integer;            { frame height to return to when unshaded }
     Desktop: Integer;             { 0..N-1, or -1 = sticky (all desktops) }
@@ -639,6 +640,7 @@ begin
   SetDesktopProp(C);
   UpdateNetState(C);
   ApplyVisibility(C);
+  if C.Decorated then Repaint(C, False);
   for I := 0 to FClients.Count - 1 do
   begin
     T := TClient(FClients[I]);
@@ -1095,6 +1097,7 @@ var
   TX, BY: Integer;
   PressNow: Char;
   IconNow: TImg;
+  Tg: string;
 begin
   if C.Fullscreen then Exit;
   Act := C = FFocused;
@@ -1118,13 +1121,18 @@ begin
   begin
     if C.Icon <> nil then IconNow := C.Icon else IconNow := FGenericIcon;
   end;
-  if (not Force) and C.Painted and (C.PaintedActive = Act) and (C.PaintedW = C.W) and
+  { buttons drawn in their toggled form: rolled up, on all workspaces, maximized }
+  Tg := '';
+  if C.Shaded then Tg := Tg + 'S';
+  if C.Desktop = -1 then Tg := Tg + 'T';
+  if C.Maximized then Tg := Tg + 'M';
+  if (not Force) and C.Painted and (C.PaintedToggled = Tg) and (C.PaintedActive = Act) and (C.PaintedW = C.W) and
      (C.PaintedH = C.H) and (C.PaintedName = C.Name) and (C.PaintedHover = C.HoverLetter) and
      (C.PaintedPress = PressNow) then Exit;
   if Act then
-    Pm := PaintFrameEx(FDpy, FScr, FTheme, FFont, wsActive, C.W, C.H, C.Name, TitleAlign, C.Shaded, C.HoverLetter, PressNow, IconNow, Mask, TX, BY)
+    Pm := PaintFrameEx(FDpy, FScr, FTheme, FFont, wsActive, C.W, C.H, C.Name, TitleAlign, C.Shaded, C.HoverLetter, PressNow, IconNow, Tg, Mask, TX, BY)
   else
-    Pm := PaintFrameEx(FDpy, FScr, FTheme, FFont, wsInactive, C.W, C.H, C.Name, TitleAlign, C.Shaded, C.HoverLetter, PressNow, IconNow, Mask, TX, BY);
+    Pm := PaintFrameEx(FDpy, FScr, FTheme, FFont, wsInactive, C.W, C.H, C.Name, TitleAlign, C.Shaded, C.HoverLetter, PressNow, IconNow, Tg, Mask, TX, BY);
   XSetWindowBackgroundPixmap(FDpy, C.Frame, Pm);
   XShapeCombineMask(FDpy, C.Frame, ShapeBounding, 0, 0, Mask, ShapeSet);
   XClearWindow(FDpy, C.Frame);
@@ -1137,6 +1145,7 @@ begin
   C.PaintedName := C.Name;
   C.PaintedHover := C.HoverLetter;
   C.PaintedPress := PressNow;
+  C.PaintedToggled := Tg;
 end;
 
 procedure TWM.SetFrameGeometry(C: TClient; NX, NY, NW, NH: Integer);
@@ -2501,6 +2510,7 @@ begin
         'M': ToggleMaximize(C);
         'H': Iconify(C);
         'S': SetShaded(C, not C.Shaded);
+        'T': if C.Desktop = -1 then MoveToDesktop(C, FCurDesk) else MoveToDesktop(C, -1);
       end;
   end;
 end;

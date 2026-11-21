@@ -33,7 +33,7 @@ Run it ONLY on a display you mean to manage: `DISPLAY=:99 ./tiewm` (it refuses t
 the root; `TIEWM_THEME`, `TIEWM_FONT`, `TIEWM_DEBUG=1` are the only settings so far). SIGTERM/SIGINT hand all
 windows back to the root cleanly.
 
-Works (281 scenario checks, `tools/wmtest.sh`, scratch Xvfb on :99 only): manage/adopt/unmanage, centred
+Works (286 scenario checks, `tools/wmtest.sh`, scratch Xvfb on :99 only): manage/adopt/unmanage, centred
 placement (honours USPosition), themed frames with shape, click-to-focus with click replay to the app,
 raise on click, active/inactive repaint, title updates, titlebar drag and Alt+drag (also with Num/Caps Lock),
 Alt+right-drag resize, edge/corner resize with min-size and size-increment hints, close button
@@ -144,6 +144,10 @@ drag. `_NET_MOVERESIZE_WINDOW` (`wmctrl -e`) places and sizes a window by a give
 ConfigureRequests now follow ICCCM `win_gravity`: with the default (NorthWest) the *frame's* corner goes where the app asked
 (as `xterm -geometry +100+100` users expect); Static puts the client itself there; the other gravities anchor the frame on
 the matching edge or centre. `_NET_WM_STATE_BELOW` and the two new messages are listed in `_NET_SUPPORTED`.
+
+Stick button and toggled images: the `T` letter in `button_layout` (for example `O|TSHMC`) is a working "on all workspaces"
+button, and buttons whose state is on are drawn with the theme's `-toggled` images: stick when the window is on all
+workspaces, shade when rolled up, maximize when maximized. The default layout still has no T, as in xfwm4.
 
 Careful when testing: the live session runs a process called `tiewm` too, so test scripts must never `pkill` by name
 (`wmtest.sh` only signals a tiewm whose DISPLAY is :99).

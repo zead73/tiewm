@@ -16,7 +16,7 @@
 #title_font = Sans Bold 11
 
 # Titlebar buttons.  O menu, T stick, S shade, H hide (minimize), M maximize, C close.
-# Letters before "|" go on the left, after it on the right.  (T is not implemented.)
+# Letters before "|" go on the left, after it on the right.  T puts the window on all workspaces (try O|TSHMC).
 #button_layout = O|SHMC
 
 # left, center or right

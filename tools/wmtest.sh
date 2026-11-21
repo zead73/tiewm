@@ -987,6 +987,23 @@ G=$(absgeom "$GA"); [ "$(field "$G" x)" -eq $((200+M)) ] && [ "$(field "$G" y)" 
 xprop -root _NET_SUPPORTED | grep -q _NET_MOVERESIZE_WINDOW; check "_NET_MOVERESIZE_WINDOW is listed in _NET_SUPPORTED" $?
 stop_clients
 
+echo "== 36. stick button (T)"
+stop_wm; stop_clients
+printf '[general]\nbutton_layout = O|TSHMC\n' > "$TMP/c36.conf"
+export TIEWM_CONFIG="$TMP/c36.conf"; start_wm
+newwin tb -t "Stick me" -w 300 -h 200 -c 996633 -s 300 -p 500,300 -G 10; TB=$LAST_ID
+G=$(absgeom "$TB"); RX=$(field "$G" x); RY=$(field "$G" y); RW=$(field "$G" w)
+[ "$(deskof "$TB")" = "0" ]; check "starts on desktop 0" $?
+"$XDO" move $((RX+RW-104)) $((RY-T+8)) click 1; sec 0.7
+[ "$(deskof "$TB")" = "4294967295" ]; check "T button puts the window on all workspaces" $?
+xprop -id "$TB" _NET_WM_STATE | grep -q STICKY; check "_NET_WM_STATE has STICKY" $?
+"$XDO" move $((RX+RW-104)) $((RY-T+8)) click 1; sec 0.7
+[ "$(deskof "$TB")" = "0" ]; check "T button again returns it to the current desktop" $?
+"$XDO" move $((RX+RW-82)) $((RY-T+8)) click 1; sec 0.7
+[ "$(frameh "$TB")" = "$T" ]; check "the S button next to it still shades" $?
+stop_clients
+export TIEWM_CONFIG="$TMP/none.conf"
+
 stop_wm
 
 echo
