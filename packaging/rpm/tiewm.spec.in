@@ -1,0 +1,45 @@
+Name:           tiewm
+Version:        @VERSION@
+Release:        1%{?dist}
+Summary:        Floating X11 window manager that draws xfwm4 themes
+License:        MIT
+URL:            https://github.com/zead73/tiewm
+Source0:        %{name}-%{version}.tar.gz
+BuildRequires:  fpc
+BuildRequires:  libX11-devel
+BuildRequires:  libXft-devel
+BuildRequires:  libXext-devel
+BuildRequires:  libXrandr-devel
+Recommends:     xfwm4
+Suggests:       picom
+# Free Pascal produces no debug information rpm can split off
+%global debug_package %{nil}
+
+%description
+tiewm is a floating window manager written in Free Pascal. It draws the pixmap
+themes of xfwm4 (the themes come from the xfwm4 package) and works with EWMH
+panels and taskbars such as lxqt-panel. It supports several monitors (RandR),
+workspaces, window rules, and a config file in ~/.config/tiewm/tiewm.conf.
+
+Choose "tiewm" as the window manager of your session (for LXQt: Session
+Settings), or pick the tiewm entry on the login screen.
+
+%prep
+%autosetup
+
+%build
+./build.sh main
+
+%install
+install -Dpm755 tiewm %{buildroot}%{_bindir}/tiewm
+install -Dpm644 packaging/tiewm.desktop %{buildroot}%{_datadir}/xsessions/tiewm.desktop
+
+%files
+%license LICENSE
+%doc README.md tiewm.conf.example
+%{_bindir}/tiewm
+%{_datadir}/xsessions/tiewm.desktop
+
+%changelog
+* Sat Nov 21 2026 tiewm <noreply@users.noreply.github.com> - @VERSION@-1
+- First RPM package

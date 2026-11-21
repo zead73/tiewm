@@ -1,0 +1,29 @@
+# Maintainer: tiewm <noreply@users.noreply.github.com>
+# Built from a tarball of the working tree: run packaging/arch/build.sh, which makes the tarball with git archive and calls makepkg.
+pkgname=tiewm
+pkgver=0.5
+pkgrel=1
+pkgdesc='Floating X11 window manager that draws xfwm4 themes, written in Free Pascal'
+arch=(x86_64)
+url='https://github.com/zead73/tiewm'
+license=(MIT)
+depends=(libx11 libxft libxext libxrandr)
+makedepends=(fpc)
+optdepends=('xfwm4: ships the themes tiewm draws (Daloa, Default, ...)'
+            'picom: shadows and transparency')
+options=(!debug)
+source=("$pkgname-$pkgver.tar.gz")
+sha256sums=(SKIP)
+
+build() {
+  cd "$pkgname-$pkgver"
+  ./build.sh main
+}
+
+package() {
+  cd "$pkgname-$pkgver"
+  install -Dm755 tiewm "$pkgdir/usr/bin/tiewm"
+  install -Dm644 tiewm.conf.example README.md -t "$pkgdir/usr/share/doc/$pkgname/"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 packaging/tiewm.desktop "$pkgdir/usr/share/xsessions/tiewm.desktop"
+}
