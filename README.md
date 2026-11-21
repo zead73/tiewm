@@ -5,7 +5,7 @@ can replace xfwm4 under LXQt; picom already does the compositing, so the WM only
 The point of the project is learning and showing what Pascal can do.
 
 Status (tiewm 0.5): in daily use as the author's window manager, on two monitors. 331 scenario checks pass against a
-scratch X server, and all seven installed xfwm4 themes match real xfwm4 pixel for pixel (one theme is 4 pixels off).
+scratch X server, and all seven installed xfwm4 themes match real xfwm4 pixel for pixel.
 
 - [Features](#features)
 - [Default keys and mouse](#default-keys-and-mouse)
@@ -172,6 +172,8 @@ options, with `tiewm` in the PATH).
 - `tools/themecheck.sh [theme ...]` renders the same two windows under **real xfwm4** and under tiewm for every installed
   theme and counts the pixels that differ (see below). xfwm4 runs on a private D-Bus session with a private config folder,
   so your real xfwm4 settings are never touched.
+- `tools/zoneprobe.sh` paints a copy of Moheli's title tiles in distinct colours and prints where each one begins and ends in
+  xfwm4's frame and in tiewm's (this is how the title-strip layout below was found).
 - `tools/nested.sh start|stop|shot` runs tiewm in Xephyr with its own D-Bus session and a copy of the LXQt config, with the real
   lxqt-panel, pcmanfm-qt, qterminal and Vivaldi, fully isolated from the live session.
 - `tools/paintbench.pas` times frame painting (a 2560x1440 frame takes about 2 ms, because only the border strips are
@@ -208,19 +210,25 @@ checked by `themecheck.sh`.
   `themerc` beats xfconf for `button_offset` and `button_spacing`. Buttons start at the left border plus `button_offset` and
   overlap by `-button_spacing`; the right group is placed right to left but drawn left to right. Buttons are centred vertically
   in the title: y = (title height - button height + 1) / 2.
-- **Title strip**: `title-1` tiled under the left button group, `title-5` under the right group, `title-3` between (the default,
-  `full_width_title`); `title-2` / `title-4` only around the text when that is off. The zones reach past the buttons by
-  (corner width - border width) pixels. A tile can be a row taller than the title; it is clipped to the title height.
-- **Title text**: x = end of the left buttons + 5 (+ `title_horizontal_offset`); baseline = (title height - font height) / 2 +
-  ascent + `title_vertical_offset_*`. Greyscale anti-aliasing with full hinting matches xfwm4 best (the user's fontconfig forces
-  `rgba=rgb` after name parsing, so hinting is set on the matched pattern). `title_shadow_*=frame` is an outline in the shadow
-  colour at the four neighbouring offsets. Inactive text is #919190.
+- **Title strip** (found with probe themes whose title tiles were painted in distinct colours): `title-1` tiled up to a
+  `title-2` tile, `title-3` tiled under the "text zone", one `title-4` tile, then `title-5` tiled to the right corner. The
+  tiles `title-2` / `title-4` are one tile wide (by their XPM) and sit against the zone. With `full_width_title` (the
+  default) the zone is everything between the two button groups; otherwise it is the text plus two pixels. The corner
+  width does not matter; `button_offset` shifts both groups' edges.
+- **Title text**: left-aligned text starts at the end of the left button group + `title_horizontal_offset` + the width of the
+  `title-2` tile (Daloa, Default, Kokodi: 4; Default-hdpi: 6; Default-xhdpi: 8); centred text is centred between the button
+  groups and ignores the offset. Baseline = (title height - font height) / 2 + ascent + `title_vertical_offset_*`. A title
+  that is too long is **not** shortened with an ellipsis: it is cut off one `title-4` tile before the right button group.
+  Greyscale anti-aliasing with full hinting matches xfwm4 best (the user's fontconfig forces `rgba=rgb` after name parsing, so
+  hinting is set on the matched pattern). `title_shadow_*=frame` is an outline in the shadow colour at the four neighbouring
+  offsets. Inactive text is #919190.
 - **App icon**: scaled to the smaller side of the menu button (22 px in Default, 44 in Default-xhdpi), centred with the vertical
   offset rounded up; the menu button is drawn only over the icon's rows when it is taller than the icon.
 
-Result of `themecheck.sh` (inactive / active window, pixels that differ by more than 3 levels, client area excluded): Daloa,
-Default, Default-hdpi, Default-xhdpi, Kokodi and Nordic 0 / 0; Moheli 0 / 4 (single pixels where its two title zones meet on the
-first and last row). Frame extents match xfwm4 for all seven. To make the reference frames by hand:
+Result of `themecheck.sh` (pixels that differ by more than 3 levels, client area excluded): **0 for every installed theme, both
+active and inactive windows**, and the frame extents match xfwm4 for all seven. With `THEMECHECK_TITLE="some long title"` the
+same script compares title text too (both sides left-aligned): inactive windows are exact for all seven themes; active ones
+differ only by anti-aliasing of the glyphs (a few dozen pixels, at most 6 levels). To make the reference frames by hand:
 
     Xvfb :99 -screen 0 1024x768x24 &
     DISPLAY=:99 xfwm4 --compositor=off &

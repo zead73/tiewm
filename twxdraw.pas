@@ -28,7 +28,7 @@ type
     function Width(const S: string): Integer;
     { Draws S with its baseline at BaseY. Shadow, if any, is drawn first. }
     procedure Draw(Pm: TPixmap; AVisual: PVisual; ACmap: TColormap; X, BaseY: Integer;
-      const S: string; RGB: LongWord; Mode: TShadowMode; ShadowRGB: LongWord);
+      const S: string; RGB: LongWord; Mode: TShadowMode; ShadowRGB: LongWord; ClipRight: Integer = -1);
     { Shortens S with an ellipsis so it fits in MaxW pixels }
     function Fit(const S: string; MaxW: Integer): string;
     property Ascent: Integer read GetAscent;
@@ -40,10 +40,6 @@ function DestroyImg(Im: PXImage): cint; cdecl; external 'X11' name 'XDestroyImag
 
 type
   TTitleAlign = (taLeft, taCenter, taRight);
-
-const
-  { measured from xfwm4: gap between the last left button and the text }
-  TitleTextGap = 5;
 
 var
   { set from the config file by the window manager }
@@ -96,7 +92,7 @@ var
   Img: TImg;
   O: TFrameOpts;
   M: TThemeMetrics;
-  L, R, TW, Avail, VOff: Integer;
+  L, R, TW, Avail, VOff, W2: Integer;
   Shown, ShadowKey, ColorKey: string;
   Mode: TShadowMode;
   TextRGB, ShadowRGB, DefTextColor: LongWord;
@@ -125,16 +121,20 @@ begin
     ColorKey := 'inactive_text_color';
     VOff := Theme.RCInt('title_vertical_offset_inactive', 0);
   end;
-  Avail := R - (L + TitleTextGap) - 2;
-  Shown := Font.Fit(Title, Avail);
+  { measured from real xfwm4: left-aligned text starts at the end of the left buttons + title_horizontal_offset + the
+    width of the title-2 tile; centred text sits in the middle between the button groups (the zone it is drawn in is
+    two pixels wider than the text) and ignores the offset }
+  W2 := Theme.Title2Width;
+  Avail := R - (L + W2) - 2;
+  { xfwm4 does not shorten a long title with an ellipsis: it is cut off one title-4 tile before the right button group }
+  Shown := Title;
   TW := Font.Width(Shown);
   case Align of
-    taCenter: TextX := L + TitleTextGap + (Avail - TW) div 2;
-    taRight: TextX := R - 2 - TW;
+    taCenter: TextX := (L + R) div 2 - (TW + 2) div 2;
+    taRight: TextX := R - 2 - TW + Theme.RCInt('title_horizontal_offset', 0);
   else
-    TextX := L + TitleTextGap;
+    TextX := L + W2 + Theme.RCInt('title_horizontal_offset', 0);
   end;
-  Inc(TextX, Theme.RCInt('title_horizontal_offset', 0));
   BaseY := (M.TitleH - (Font.Ascent + Font.Descent)) div 2 + Font.Ascent + VOff;
   O.TextX := TextX;
   O.TextW := TW;
@@ -167,7 +167,7 @@ begin
     ShadowRGB := ParseColorSpec(Theme, Theme.RC('active_text_shadow_color', 'active_text_shadow_color'), $000000)
   else
     ShadowRGB := ParseColorSpec(Theme, Theme.RC('inactive_text_shadow_color', 'inactive_text_shadow_color'), $000000);
-  Font.Draw(Result, Vis, DefaultColormap(Dpy, Scr), TextX, BaseY, Shown, TextRGB, Mode, ShadowRGB);
+  Font.Draw(Result, Vis, DefaultColormap(Dpy, Scr), TextX, BaseY, Shown, TextRGB, Mode, ShadowRGB, R - Theme.Title4Width);
 end;
 
 function TTitleFont.GetAscent: Integer;
@@ -226,15 +226,22 @@ begin
 end;
 
 procedure TTitleFont.Draw(Pm: TPixmap; AVisual: PVisual; ACmap: TColormap; X, BaseY: Integer;
-  const S: string; RGB: LongWord; Mode: TShadowMode; ShadowRGB: LongWord);
+  const S: string; RGB: LongWord; Mode: TShadowMode; ShadowRGB: LongWord; ClipRight: Integer);
 var
   D: Pointer;
   C, SC: TXftColor;
   DX, DY: Integer;
+  Clip: TXRectangle;
 begin
   if S = '' then Exit;
   D := XftDrawCreate(FDpy, Pm, AVisual, ACmap);
   try
+    if ClipRight >= 0 then
+    begin
+      { cut the text off at ClipRight (exclusive) instead of drawing past it }
+      Clip.x := 0; Clip.y := 0; Clip.width := ClipRight; Clip.height := 4096;
+      XftDrawSetClipRectangles(D, 0, 0, @Clip, 1);
+    end;
     C := MakeXftColor(RGB);
     SC := MakeXftColor(ShadowRGB);
     case Mode of

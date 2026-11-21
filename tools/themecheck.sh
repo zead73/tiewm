@@ -36,9 +36,9 @@ extents_of() { xprop -id "$1" _NET_FRAME_EXTENTS 2>/dev/null | sed 's/.*= //'; }
 
 # starts the two test windows, waits, writes "<A id> <B id>" to $1
 make_windows() {
-  "$TW" -t " " -w 300 -h 200 -c 3a3a3a -s 60 -p 150,120 -I 00ff00:16 >"$PRIV/a.log" 2>&1 &
+  "$TW" -t "${THEMECHECK_TITLE:- }" -w 300 -h 200 -c 3a3a3a -s 60 -p 150,120 -I 00ff00:16 >"$PRIV/a.log" 2>&1 &
   sleep 1.2
-  "$TW" -t " " -w 300 -h 200 -c 3a3a3a -s 60 -p 600,380 -I 00ff00:16 >"$PRIV/b.log" 2>&1 &
+  "$TW" -t "${THEMECHECK_TITLE:- }" -w 300 -h 200 -c 3a3a3a -s 60 -p 600,380 -I 00ff00:16 >"$PRIV/b.log" 2>&1 &
   sleep 1.5
   A=$(sed -n 's/^mapped id=\(0x[0-9a-fA-F]*\).*/\1/p' "$PRIV/a.log" | head -1)
   B=$(sed -n 's/^mapped id=\(0x[0-9a-fA-F]*\).*/\1/p' "$PRIV/b.log" | head -1)
@@ -66,6 +66,7 @@ for T in "${themes[@]}"; do
     <property name="theme" type="string" value="$T"/>
     <property name="title_font" type="string" value="Sans Bold 11"/>
     <property name="use_compositing" type="bool" value="false"/>
+    <property name="title_alignment" type="string" value="left"/>
   </property>
 </channel>
 XML

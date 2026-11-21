@@ -82,7 +82,11 @@ type
     function Symbol(const Name: string; out C: LongWord): Boolean;
     { side of the square the menu-button icon is scaled to: the smaller side of the menu button's pixmap }
     function MenuIconSize: Integer;
-    { x range left over for the title between the button groups }
+    { width of the title-2 tile (by its XPM): xfwm4 starts the title text that far past the left button group }
+    function Title2Width: Integer;
+    { width of the title-4 tile: the title text is cut off that far before the right button group }
+    function Title4Width: Integer;
+    { x range left over for the title between the button groups (button edges, spacing not included) }
     procedure TitleSpan(const O: TFrameOpts; W: Integer; out LeftEnd, RightStart: Integer);
     { where each button of the layout sits in a frame W wide }
     function ButtonRects(const O: TFrameOpts; W: Integer; St: TWinState): TButtonRects;
@@ -518,6 +522,22 @@ begin
   end;
 end;
 
+function TXfwmTheme.Title2Width: Integer;
+var
+  T: TImg;
+begin
+  T := StatePart('title-2', wsActive);
+  if T <> nil then Result := T.W else Result := 0;
+end;
+
+function TXfwmTheme.Title4Width: Integer;
+var
+  T: TImg;
+begin
+  T := StatePart('title-4', wsActive);
+  if T <> nil then Result := T.W else Result := 0;
+end;
+
 procedure TXfwmTheme.TitleSpan(const O: TFrameOpts; W: Integer; out LeftEnd, RightStart: Integer);
 var
   R: TButtonRects;
@@ -533,7 +553,7 @@ begin
     if ButtonImg(O.Layout[I], wsActive, O) <> nil then Inc(NLeft);
   if SepAt = 0 then NLeft := Length(R);
   for I := 0 to High(R) do
-    if I < NLeft then LeftEnd := R[I].X + R[I].W + O.ButtonSpacing
+    if I < NLeft then LeftEnd := R[I].X + R[I].W
     else if R[I].X < RightStart then RightStart := R[I].X;
   if NLeft = 0 then LeftEnd := O.LeftStart + O.ButtonOffset;
 end;
@@ -583,7 +603,7 @@ end;
 procedure TXfwmTheme.Compose(Dst: TImg; St: TWinState; const O: TFrameOpts);
 var
   M: TThemeMetrics;
-  W, H, X, I, K, MidA, MidB, LeftEnd, RightStart: Integer;
+  W, H, X, I, K, MidA, MidB, LeftEnd, RightStart, W2, W4, ZS, ZE: Integer;
   T1, T2, T3, T4, T5, Img: TImg;
   Cx, Cy: TImg;
   Rects: TButtonRects;
@@ -608,28 +628,32 @@ begin
     title-2 / title-3 / title-4 around the text. Pieces are drawn only down to the title height (a
     tile can be a row taller than the title). }
   TitleSpan(O, W, LeftEnd, RightStart);
-  { the zones reach as far past the buttons as the corner pieces are wider than the borders (Moheli: 7 - 4) }
-  Inc(LeftEnd, Max(0, M.TLW - M.LeftW));
-  Dec(RightStart, Max(0, M.TRW - M.RightW));
-  if LeftEnd < MidA then LeftEnd := MidA;
-  if LeftEnd > MidB then LeftEnd := MidB;
-  if RightStart > MidB then RightStart := MidB;
-  if RightStart < LeftEnd then RightStart := LeftEnd;
-  if T1 <> nil then Dst.BlendTiled(T1, MidA, 0, LeftEnd - MidA, Min(T1.H, M.TitleH));
-  if T5 <> nil then Dst.BlendTiled(T5, RightStart, 0, MidB - RightStart, Min(T5.H, M.TitleH));
-  if (not RCBool('full_width_title', True)) and (O.TextW > 0) and (T2 <> nil) and (T3 <> nil) and (T4 <> nil) then
+  { Measured from real xfwm4 with colour-coded probe themes: the title strip is title-1 (tiled) up to a title-2 tile, then
+    title-3 (tiled) under the "text zone", then one title-4 tile, then title-5 (tiled) to the right corner. The zone is
+    everything between the button groups' inner pieces with full_width_title (the default), or just the text otherwise;
+    title-2 and title-4 are one tile wide and sit directly against the zone. }
+  if T2 <> nil then W2 := T2.W else W2 := 0;
+  if T4 <> nil then W4 := T4.W else W4 := 0;
+  if RCBool('full_width_title', True) then
   begin
-    X := O.TextX;
-    if X < LeftEnd then X := LeftEnd;
-    if X > RightStart then X := RightStart;
-    Dst.BlendTiled(T2, LeftEnd, 0, X - LeftEnd, Min(T2.H, M.TitleH));
-    I := X + O.TextW;
-    if I > RightStart then I := RightStart;
-    Dst.BlendTiled(T3, X, 0, I - X, Min(T3.H, M.TitleH));
-    Dst.BlendTiled(T4, I, 0, RightStart - I, Min(T4.H, M.TitleH));
+    ZS := LeftEnd + W2;
+    ZE := RightStart - W4;
   end
-  else if T3 <> nil then
-    Dst.BlendTiled(T3, LeftEnd, 0, RightStart - LeftEnd, Min(T3.H, M.TitleH));
+  else
+  begin
+    ZS := O.TextX;
+    ZE := O.TextX + O.TextW + 2;           { the zone is two pixels wider than the text }
+  end;
+  if ZS < LeftEnd + W2 then ZS := LeftEnd + W2;
+  if ZE > RightStart - W4 then ZE := RightStart - W4;
+  if ZS < MidA + W2 then ZS := MidA + W2;
+  if ZE > MidB - W4 then ZE := MidB - W4;
+  if ZE < ZS then ZE := ZS;
+  if T1 <> nil then Dst.BlendTiled(T1, MidA, 0, ZS - W2 - MidA, Min(T1.H, M.TitleH));
+  if T2 <> nil then Dst.BlendTiled(T2, ZS - W2, 0, W2, Min(T2.H, M.TitleH));
+  if T3 <> nil then Dst.BlendTiled(T3, ZS, 0, ZE - ZS, Min(T3.H, M.TitleH));
+  if T4 <> nil then Dst.BlendTiled(T4, ZE, 0, W4, Min(T4.H, M.TitleH));
+  if T5 <> nil then Dst.BlendTiled(T5, ZE + W4, 0, MidB - (ZE + W4), Min(T5.H, M.TitleH));
   { buttons: left to right, so each button's left edge wins where they overlap }
   Rects := ButtonRects(O, W, St);
   for I := 0 to High(Rects) do

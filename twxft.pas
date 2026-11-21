@@ -42,6 +42,8 @@ function XftDrawCreate(dpy: PDisplay; Drawable: TDrawable; Visual: PVisual;
 procedure XftDrawDestroy(Draw: Pointer); cdecl; external 'Xft' name 'XftDrawDestroy';
 procedure XftDrawStringUtf8(Draw: Pointer; Color: PXftColor; Font: PXftFontRec;
   X, Y: cint; Str: PChar; Len: cint); cdecl; external 'Xft' name 'XftDrawStringUtf8';
+function XftDrawSetClipRectangles(Draw: Pointer; XOrigin, YOrigin: cint; Rects: PXRectangle; N: cint): cint; cdecl;
+  external 'Xft' name 'XftDrawSetClipRectangles';
 procedure XftTextExtentsUtf8(dpy: PDisplay; Font: PXftFontRec; Str: PChar; Len: cint;
   Extents: PGlyphInfo); cdecl; external 'Xft' name 'XftTextExtentsUtf8';
 
