@@ -33,7 +33,7 @@ Run it ONLY on a display you mean to manage: `DISPLAY=:99 ./tiewm` (it refuses t
 the root; `TIEWM_THEME`, `TIEWM_FONT`, `TIEWM_DEBUG=1` are the only settings so far). SIGTERM/SIGINT hand all
 windows back to the root cleanly.
 
-Works (216 scenario checks, `tools/wmtest.sh`, scratch Xvfb on :99 only): manage/adopt/unmanage, centred
+Works (223 scenario checks, `tools/wmtest.sh`, scratch Xvfb on :99 only): manage/adopt/unmanage, centred
 placement (honours USPosition), themed frames with shape, click-to-focus with click replay to the app,
 raise on click, active/inactive repaint, title updates, titlebar drag and Alt+drag (also with Num/Caps Lock),
 Alt+right-drag resize, edge/corner resize with min-size and size-increment hints, close button
@@ -62,6 +62,10 @@ appears/disappears, the client stays where it is). Undecorated windows still mov
 Alt+right-drag or Alt+F8, maximize/fullscreen/close/menu (Alt+space) as usual; Shade is disabled for them.
 The window menu's "No titlebar" entry (Alt+space opens it on an undecorated window) turns the frame off or on for any
 window by hand; the client never moves, and a titlebar that would land above the work area pushes the window down.
+
+Button states: titlebar buttons use the theme's `prelight` image under the pointer and its `pressed` image while held
+(only while the pointer is still over the button; releasing elsewhere cancels the click). Needs the theme to ship those
+images; missing ones fall back to the normal image.
 
 Undecorated border: `undecorated_border = N` (0..16 px, default 0) gives windows without a titlebar a thin solid border in
 the palette colour (focused/unfocused) with real resize zones (edges, 16 px corner zones, resize cursors); the frame grows
@@ -137,7 +141,7 @@ unless every window has `_NET_WM_DESKTOP`.
 
 Deliberately not done: other key bindings, `--replace`,
 multi-monitor, modal dialogs, adopting windows that are
-iconic when the WM starts, button prelight/pressed images, app icon in the menu button, session
+iconic when the WM starts, app icon in the menu button, session
 management, gravity/transient-for handling, `_NET_WM_MOVERESIZE`. Not yet run against the real LXQt
 session or lxqt-panel.
 

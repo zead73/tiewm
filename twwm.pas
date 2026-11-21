@@ -26,6 +26,8 @@ type
     Maximized, Fullscreen, Iconic, Above, Below, Shaded: Boolean;
     Decorated: Boolean;           { False: no frame graphics at all (the app draws its own) }
     ResName, ResClass: string;    { WM_CLASS: instance and class }
+    HoverLetter, PressLetter: Char;     { titlebar button under the pointer / being held down, #0 = none }
+    PaintedHover, PaintedPress: Char;
     DecorUser: Integer;           { 0 = follow the app's hints, 1 = user wants a titlebar, 2 = user wants none }
     UnshadeH: Integer;            { frame height to return to when unshaded }
     Desktop: Integer;             { 0..N-1, or -1 = sticky (all desktops) }
@@ -145,6 +147,8 @@ type
     procedure SetShaded(C: TClient; On: Boolean);
     function WantsDecorations(Win: TWindow): Boolean;
     procedure ReadClass(C: TClient);
+    procedure SetHover(C: TClient; L: Char);
+    procedure OnLeave(var Ev: TXCrossingEvent);
     function HitFor(C: TClient; X, Y: Integer): THit;
     procedure SaveDecorRule(C: TClient);
     procedure SetDecorated(C: TClient; On: Boolean);
@@ -884,6 +888,7 @@ var
   Act: Boolean;
   Pm, Mask: TPixmap;
   TX, BY: Integer;
+  PressNow: Char;
 begin
   if C.Fullscreen then Exit;
   Act := C = FFocused;
@@ -900,12 +905,15 @@ begin
     C.PaintedActive := Act;
     Exit;
   end;
+  { a button shows "pressed" only while the pointer is still over it }
+  if C.PressLetter = C.HoverLetter then PressNow := C.PressLetter else PressNow := #0;
   if (not Force) and C.Painted and (C.PaintedActive = Act) and (C.PaintedW = C.W) and
-     (C.PaintedH = C.H) and (C.PaintedName = C.Name) then Exit;
+     (C.PaintedH = C.H) and (C.PaintedName = C.Name) and (C.PaintedHover = C.HoverLetter) and
+     (C.PaintedPress = PressNow) then Exit;
   if Act then
-    Pm := PaintFrameEx(FDpy, FScr, FTheme, FFont, wsActive, C.W, C.H, C.Name, TitleAlign, C.Shaded, Mask, TX, BY)
+    Pm := PaintFrameEx(FDpy, FScr, FTheme, FFont, wsActive, C.W, C.H, C.Name, TitleAlign, C.Shaded, C.HoverLetter, PressNow, Mask, TX, BY)
   else
-    Pm := PaintFrameEx(FDpy, FScr, FTheme, FFont, wsInactive, C.W, C.H, C.Name, TitleAlign, C.Shaded, Mask, TX, BY);
+    Pm := PaintFrameEx(FDpy, FScr, FTheme, FFont, wsInactive, C.W, C.H, C.Name, TitleAlign, C.Shaded, C.HoverLetter, PressNow, Mask, TX, BY);
   XSetWindowBackgroundPixmap(FDpy, C.Frame, Pm);
   XShapeCombineMask(FDpy, C.Frame, ShapeBounding, 0, 0, Mask, ShapeSet);
   XClearWindow(FDpy, C.Frame);
@@ -916,6 +924,8 @@ begin
   C.PaintedW := C.W;
   C.PaintedH := C.H;
   C.PaintedName := C.Name;
+  C.PaintedHover := C.HoverLetter;
+  C.PaintedPress := PressNow;
 end;
 
 procedure TWM.SetFrameGeometry(C: TClient; NX, NY, NW, NH: Integer);
@@ -1047,7 +1057,7 @@ begin
     Place(C, HasPos, Atr.x, Atr.y);
   C.Frame := XCreateSimpleWindow(FDpy, FRoot, C.X, C.Y, C.W, C.H, 0, 0, 0);
   XSelectInput(FDpy, C.Frame, SubstructureMasks or ButtonPressMask or ButtonReleaseMask or
-    PointerMotionMask or ExposureMask or EnterWindowMask);
+    PointerMotionMask or ExposureMask or EnterWindowMask or LeaveWindowMask);
   XSetWindowBorderWidth(FDpy, Win, 0);
   XAddToSaveSet(FDpy, Win);
   if WasViewable then Inc(C.IgnoreUnmap);   { reparenting a mapped window unmaps it }
@@ -2100,6 +2110,9 @@ begin
       begin
         FPressClient := C;
         FPressLetter := H.Letter;
+        C.HoverLetter := H.Letter;
+        C.PressLetter := H.Letter;
+        Repaint(C, False);
       end;
     hkTitle:
       begin
@@ -2134,6 +2147,8 @@ begin
   begin
     C := FPressClient;
     FPressClient := nil;
+    C.PressLetter := #0;
+    if FClients.IndexOf(C) >= 0 then Repaint(C, False);
     if Ev.window <> C.Frame then Exit;
     H := HitFor(C, Ev.x, Ev.y);
     if (H.Kind = hkButton) and (H.Letter = FPressLetter) then
@@ -2146,9 +2161,25 @@ begin
   end;
 end;
 
+procedure TWM.SetHover(C: TClient; L: Char);
+begin
+  if C.HoverLetter = L then Exit;
+  C.HoverLetter := L;
+  if C.Decorated then Repaint(C, False);
+end;
+
+procedure TWM.OnLeave(var Ev: TXCrossingEvent);
+var
+  C: TClient;
+begin
+  C := FindFrame(Ev.window);
+  if C <> nil then SetHover(C, #0);
+end;
+
 procedure TWM.OnMotion(var Ev: TXMotionEvent);
 var
   C: TClient;
+  H: THit;
 begin
   if FDrag <> dgNone then
   begin
@@ -2156,7 +2187,15 @@ begin
     Exit;
   end;
   C := FindFrame(Ev.window);
-  if C <> nil then DefineHitCursor(C, Ev.x, Ev.y);
+  if C <> nil then
+  begin
+    DefineHitCursor(C, Ev.x, Ev.y);
+    if C.Decorated then
+    begin
+      H := HitFor(C, Ev.x, Ev.y);
+      if H.Kind = hkButton then SetHover(C, H.Letter) else SetHover(C, #0);
+    end;
+  end;
 end;
 
 procedure TWM.OnClientMessage(var Ev: TXClientMessageEvent);
@@ -2333,6 +2372,7 @@ begin
     ButtonPress: OnButtonPress(Ev.xbutton);
     ButtonRelease: OnButtonRelease(Ev.xbutton);
     MotionNotify: OnMotion(Ev.xmotion);
+    LeaveNotify: OnLeave(Ev.xcrossing);
     ClientMessage: OnClientMessage(Ev.xclient);
     PropertyNotify: OnProperty(Ev.xproperty);
   end;

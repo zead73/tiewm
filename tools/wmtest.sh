@@ -774,6 +774,40 @@ newwin ub0 -t "Default: no border" -w 300 -h 200 -c cc9900 -s 300 -p 400,300 -D 
 xprop -id "$LAST_ID" _NET_FRAME_EXTENTS | grep -q "= 0, 0, 0, 0"; check "with the default (undecorated_border = 0) nothing changes: no border at all" $?
 stop_clients
 
+echo "== 30. titlebar buttons: hover (prelight) and pressed images"
+stop_clients
+newwin hv -t "Hover me" -w 300 -h 200 -c 7a5599 -s 300 -p 400,300; HV=$LAST_ID
+G=$(absgeom "$HV"); RX=$(field "$G" x); RY=$(field "$G" y); RW=$(field "$G" w)
+CX=$((RX+RW-25)); SX=$((RX+RW-94)); BY=$((RY-19))      # left edge of the close and shade buttons, top of the titlebar
+crop() { magick "$1" -crop 24x19+"$2"+"$BY" +repage "$3"; }
+ae() { compare -metric AE "$1" "$2" null: 2>&1 | awk '{printf "%d", $1}'; }
+"$XDO" move 900 700; sec 0.5
+import -window root "$TMP/hv-base.png" 2>/dev/null
+crop "$TMP/hv-base.png" "$CX" "$TMP/hv-base-close.png"; crop "$TMP/hv-base.png" "$SX" "$TMP/hv-base-shade.png"
+"$XDO" move $((CX+12)) $((BY+9)); sec 0.5
+import -window root "$TMP/hv-hover.png" 2>/dev/null
+crop "$TMP/hv-hover.png" "$CX" "$TMP/hv-hover-close.png"
+[ "$(ae "$TMP/hv-base-close.png" "$TMP/hv-hover-close.png")" -gt 20 ]; check "the close button looks different under the pointer ($(ae "$TMP/hv-base-close.png" "$TMP/hv-hover-close.png") pixels changed)" $?
+crop "$TMP/hv-hover.png" "$SX" "$TMP/hv-hover-shade.png"
+[ "$(ae "$TMP/hv-base-shade.png" "$TMP/hv-hover-shade.png")" = "0" ]; check "the neighbouring shade button is unchanged" $?
+"$XDO" move $((RX+60)) $((BY+9)); sec 0.5
+import -window root "$TMP/hv-off.png" 2>/dev/null
+crop "$TMP/hv-off.png" "$CX" "$TMP/hv-off-close.png"
+[ "$(ae "$TMP/hv-base-close.png" "$TMP/hv-off-close.png")" = "0" ]; check "moving onto the title text puts the button back to normal" $?
+"$XDO" move $((SX+12)) $((BY+9)); sec 0.4
+import -window root "$TMP/hv-hover2.png" 2>/dev/null; crop "$TMP/hv-hover2.png" "$SX" "$TMP/hv-hover2-shade.png"
+"$XDO" down 1; sec 0.5
+import -window root "$TMP/hv-press.png" 2>/dev/null; crop "$TMP/hv-press.png" "$SX" "$TMP/hv-press-shade.png"
+[ "$(ae "$TMP/hv-hover2-shade.png" "$TMP/hv-press-shade.png")" -gt 20 ] && [ "$(ae "$TMP/hv-base-shade.png" "$TMP/hv-press-shade.png")" -gt 20 ]; check "a held button shows its own pressed image ($(ae "$TMP/hv-hover2-shade.png" "$TMP/hv-press-shade.png") px vs hover)" $?
+"$XDO" move 900 700; sec 0.5
+import -window root "$TMP/hv-away.png" 2>/dev/null; crop "$TMP/hv-away.png" "$SX" "$TMP/hv-away-shade.png"
+[ "$(ae "$TMP/hv-base-shade.png" "$TMP/hv-away-shade.png")" = "0" ]; check "dragging off the button while held: it goes back to normal" $?
+"$XDO" up 1; sec 0.6
+[ "$(frameh "$HV")" = "$((200+T+M))" ]; check "and releasing outside does not trigger the button (window not shaded)" $?
+"$XDO" move $((SX+12)) $((BY+9)) click 1; sec 0.8
+[ "$(frameh "$HV")" = "$T" ]; check "a normal click on the same button still works (shades)" $?
+stop_clients
+
 stop_wm
 
 echo
