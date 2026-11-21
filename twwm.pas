@@ -3173,7 +3173,7 @@ begin
     ReadHints(C);
 end;
 
-{ Moves a window to the next (Dir = 1) or previous monitor, keeping its place relative to the
+{ Moves a window to the monitor on its right (Dir = 1) or left, keeping its place relative to the
   monitor's corner; maximized and fullscreen windows refit to the new monitor. }
 procedure TWM.MoveToMonitor(C: TClient; Dir: Integer);
 var
@@ -3181,8 +3181,8 @@ var
 begin
   if (Length(FMon) < 2) or C.Iconic then Exit;
   Src := MonitorOf(C);
-  Dst := ((Src + Dir) mod Length(FMon) + Length(FMon)) mod Length(FMon);
-  if Dst = Src then Exit;
+  Dst := Src + Dir;                       { monitors are ordered left to right; no wrapping round }
+  if (Dst < 0) or (Dst >= Length(FMon)) then Exit;
   if C.Fullscreen then
   begin
     C.X := FMon[Dst].X; C.Y := FMon[Dst].Y; C.W := FMon[Dst].W; C.H := FMon[Dst].H;

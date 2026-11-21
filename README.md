@@ -169,8 +169,8 @@ Alt+F12 (`above`: always on top), and an Alt+Tab list: while Alt is held a list 
 middle of the monitor the pointer is on (selected row highlighted, minimized windows dimmed and marked, titles ellipsized); it uses
 the menu font and the palette. No thumbnails.
 
-More: Super+Shift+Right / Left (`move_to_next_monitor` / `move_to_prev_monitor`) hop the focused window to the next or previous
-monitor (wrapping), keeping its place relative to the monitor's corner; maximized and fullscreen windows refit. Optional focus
+More: Super+Shift+Right / Left (`move_to_next_monitor` / `move_to_prev_monitor`) hop the focused window to the monitor on its
+right or left (monitors are ordered by position; no wrapping), keeping its place relative to the monitor's corner; maximized and fullscreen windows refit. Optional focus
 follows the mouse (`focus_mode = follow`, `focus_delay` ms, default 250): the window under the pointer is focused after the delay, not
 raised, and a pass-through shorter than the delay does nothing; bare desktop keeps the focus. Group modality: a modal window with no
 `WM_TRANSIENT_FOR` blocks the other windows that share its `WM_CLIENT_LEADER` (the main window and its siblings), like a

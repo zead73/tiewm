@@ -98,7 +98,7 @@
 #resize_window = Alt+F8
 # above: toggle always-on-top for the focused window (also in the window menu)
 #above = Alt+F12
-# move_to_next_monitor / move_to_prev_monitor: hop the focused window to another monitor (wraps round)
+# move_to_next_monitor / move_to_prev_monitor: move the focused window to the monitor on its right / left (no wrapping)
 #move_to_next_monitor = Super+Shift+Right
 #move_to_prev_monitor = Super+Shift+Left
 #

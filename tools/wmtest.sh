@@ -1141,9 +1141,12 @@ G0=$(absgeom "$MV"); X0=$(field "$G0" x); Y0=$(field "$G0" y)
 "$XDO" keydown Super_L keydown Shift_L key Right keyup Shift_L keyup Super_L; sec 0.6
 G=$(absgeom "$MV"); [ "$(field "$G" x)" -eq $((X0+1280)) ] && [ "$(field "$G" y)" -eq "$Y0" ]; RC=$?; check "Super+Shift+Right moves it to the right monitor at the same place ($G)" $RC
 "$XDO" keydown Super_L keydown Shift_L key Right keyup Shift_L keyup Super_L; sec 0.6
-G=$(absgeom "$MV"); [ "$(field "$G" x)" -eq "$X0" ]; RC=$?; check "again: wraps round to the first monitor ($G)" $RC
+G=$(absgeom "$MV"); [ "$(field "$G" x)" -eq $((X0+1280)) ]; RC=$?; check "Right again on the right-most monitor does nothing: no wrapping round ($G)" $RC
 "$XDO" keydown Super_L keydown Shift_L key Left keyup Shift_L keyup Super_L; sec 0.6
-G=$(absgeom "$MV"); [ "$(field "$G" x)" -eq $((X0+1280)) ]; RC=$?; check "Super+Shift+Left goes the other way ($G)" $RC
+G=$(absgeom "$MV"); [ "$(field "$G" x)" -eq "$X0" ]; RC=$?; check "Super+Shift+Left moves it back to the left monitor ($G)" $RC
+"$XDO" keydown Super_L keydown Shift_L key Left keyup Shift_L keyup Super_L; sec 0.6
+G=$(absgeom "$MV"); [ "$(field "$G" x)" -eq "$X0" ]; RC=$?; check "Left again on the left-most monitor does nothing ($G)" $RC
+"$XDO" keydown Super_L keydown Shift_L key Right keyup Shift_L keyup Super_L; sec 0.6
 "$XDO" keydown Super_L key Return keyup Super_L; sec 0.6
 "$XDO" keydown Super_L keydown Shift_L key Left keyup Shift_L keyup Super_L; sec 0.6
 G=$(absgeom "$MV"); [ "$(field "$G" x)" -eq $M ] && [ "$(field "$G" w)" -eq $((1280-2*M)) ]; RC=$?; check "a maximized window arrives maximized on the other monitor ($G)" $RC
