@@ -23,6 +23,7 @@ type
     IgnoreUnmap: Integer;         { unmaps we caused ourselves }
     InputHint, HasDelete, HasTakeFocus: Boolean;
     MinW, MinH, MaxW, MaxH, IncW, IncH, BaseW, BaseH: Integer;   { client sizes }
+    Gravity: Integer;             { ICCCM win_gravity: 1 NorthWest (default) .. 9 SouthEast, 10 Static }
     Maximized, Fullscreen, Iconic, Above, Below, Shaded, Modal, StartIconic: Boolean;
     Extra: array of TAtom;        { other _NET_WM_STATE atoms the app set (skip_taskbar...): kept as they are }
     Decorated: Boolean;           { False: no frame graphics at all (the app draws its own) }
@@ -81,6 +82,7 @@ type
     aNetWmState, aMaxVert, aMaxHorz, aCloseWindow, aWindowType: TAtom;
     aTypeDock, aTypeDesktop, aTypeMenu, aTypeDropdown, aTypePopup, aTypeTooltip, aTypeNotification, aTypeCombo, aTypeDnd: TAtom;
     aHidden, aFullscreen, aWmDesktop, aBelow, aAbove, aShaded, aSticky, aDeskNames, aMotif, aNetWmIcon, aModal, aSkipTaskbar, aSkipPager, aDemandsAttn: TAtom;
+    aMoveResize, aMoveResizeWin,
     aStrut, aStrutPartial, aNumDesktops, aCurDesktop, aWorkarea, aDeskGeom, aDeskViewport, aSupportingCheck: TAtom;
     { drag state }
     FDrag: TDragKind;
@@ -189,6 +191,7 @@ type
     procedure UpdateClientList;
     procedure SetWmState(C: TClient; State: Integer);
     procedure UpdateNetState(C: TClient);
+    procedure GravityFrame(C: TClient; ReqX, ReqY: Integer; const E: TExt; out FX, FY: Integer);
     procedure Place(C: TClient; HasPos: Boolean; CX, CY: Integer);
     procedure BeginDrag(C: TClient; Kind: TDragKind; Hit: THitKind; XRoot, YRoot: Integer; ATime: culong);
     procedure EndDrag;
@@ -202,6 +205,9 @@ type
     procedure OnButtonRelease(var Ev: TXButtonEvent);
     procedure OnMotion(var Ev: TXMotionEvent);
     procedure OnClientMessage(var Ev: TXClientMessageEvent);
+    procedure OnMoveResize(C: TClient; var Ev: TXClientMessageEvent);
+    procedure OnMoveResizeWindow(C: TClient; var Ev: TXClientMessageEvent);
+    procedure ApplyRequest(C: TClient; Mask: culong; RX, RY, RW, RH: Integer);
     procedure OnProperty(var Ev: TXPropertyEvent);
     procedure DefineHitCursor(C: TClient; XF, YF: Integer);
   public
@@ -405,6 +411,7 @@ begin
   aSkipTaskbar := A('_NET_WM_STATE_SKIP_TASKBAR');
   aSkipPager := A('_NET_WM_STATE_SKIP_PAGER');
   aDemandsAttn := A('_NET_WM_STATE_DEMANDS_ATTENTION');
+  aMoveResize := A('_NET_WM_MOVERESIZE'); aMoveResizeWin := A('_NET_MOVERESIZE_WINDOW');
   aSticky := A('_NET_WM_STATE_STICKY');
   aDeskNames := A('_NET_DESKTOP_NAMES');
   aStrut := A('_NET_WM_STRUT'); aStrutPartial := A('_NET_WM_STRUT_PARTIAL');
@@ -740,7 +747,7 @@ procedure TWM.SetupEwmh;
 var
   Sup: array of culong;
   Name: string;
-  Atoms: array[0..24] of TAtom;
+  Atoms: array[0..27] of TAtom;
   Names: string;
   Zero: array of culong;
   I: Integer;
@@ -757,6 +764,7 @@ begin
   Atoms[14] := aHidden; Atoms[15] := aFullscreen; Atoms[16] := aWmDesktop;
   Atoms[17] := aSticky; Atoms[18] := aDeskNames; Atoms[19] := aAbove; Atoms[20] := aShaded;
   Atoms[21] := aModal; Atoms[22] := aSkipTaskbar; Atoms[23] := aSkipPager; Atoms[24] := aDemandsAttn;
+  Atoms[25] := aBelow; Atoms[26] := aMoveResize; Atoms[27] := aMoveResizeWin;
   SetLength(Sup, Length(Atoms));
   for I := 0 to High(Atoms) do Sup[I] := Atoms[I];
   SetCards(FRoot, aSupported, Sup);
@@ -960,9 +968,12 @@ var
 begin
   C.MinW := 1; C.MinH := 1; C.MaxW := 65535; C.MaxH := 65535;
   C.IncW := 1; C.IncH := 1; C.BaseW := 0; C.BaseH := 0;
+  C.Gravity := 1;
   FillChar(Sz, SizeOf(Sz), 0);
   if XGetWMNormalHints(FDpy, C.Win, @Sz, @Supplied) <> 0 then
   begin
+    if ((Sz.flags and PWinGravity) <> 0) and (Sz.win_gravity >= 1) and (Sz.win_gravity <= 10) then
+      C.Gravity := Sz.win_gravity;
     if (Sz.flags and PMinSize) <> 0 then begin C.MinW := Sz.min_width; C.MinH := Sz.min_height; end;
     if (Sz.flags and PMaxSize) <> 0 then begin C.MaxW := Sz.max_width; C.MaxH := Sz.max_height; end;
     if (Sz.flags and PResizeInc) <> 0 then begin C.IncW := Sz.width_inc; C.IncH := Sz.height_inc; end;
@@ -1145,6 +1156,28 @@ begin
   SendConfigure(C);
 end;
 
+{ ICCCM window gravity: where the frame goes so that the position an app asked
+  for (the client window's own x,y) is honoured the way its win_gravity says.
+  NorthWest (the default): the frame's top-left corner is at x,y. Static: the
+  client itself is at x,y and the frame extends up and left of it. }
+procedure TWM.GravityFrame(C: TClient; ReqX, ReqY: Integer; const E: TExt; out FX, FY: Integer);
+begin
+  case C.Gravity of
+    2, 5, 8: FX := ReqX - (E.L + E.R) div 2;
+    3, 6, 9: FX := ReqX - (E.L + E.R);
+    10: FX := ReqX - E.L;
+  else
+    FX := ReqX;
+  end;
+  case C.Gravity of
+    4, 5, 6: FY := ReqY - (E.T + E.B) div 2;
+    7, 8, 9: FY := ReqY - (E.T + E.B);
+    10: FY := ReqY - E.T;
+  else
+    FY := ReqY;
+  end;
+end;
+
 procedure TWM.Place(C: TClient; HasPos: Boolean; CX, CY: Integer);
 var
   AX, AY, AW, AH: Integer;
@@ -1155,8 +1188,7 @@ begin
   WorkArea(AX, AY, AW, AH);
   if HasPos then
   begin
-    C.X := CX - E.L;
-    C.Y := CY - E.T;
+    GravityFrame(C, CX, CY, E, C.X, C.Y);
   end
   else
   begin
@@ -2251,12 +2283,32 @@ begin
   Manage(Ev.window, False);
 end;
 
+{ Applies a position/size request (X,Y,W,H are the client window's, in the
+  Mask CWX/CWY/CWWidth/CWHeight bits) the way the window's gravity says. }
+procedure TWM.ApplyRequest(C: TClient; Mask: culong; RX, RY, RW, RH: Integer);
+var
+  E: TExt;
+  CW, CH, NX, NY, GX, GY: Integer;
+begin
+  E := Ext(C);
+  if C.Maximized or C.Fullscreen then begin SendConfigure(C); Exit; end;
+  if C.Shaded then SetShaded(C, False);
+  ClientSizeOf(C, CW, CH);
+  NX := C.X; NY := C.Y;
+  if (Mask and CWWidth) <> 0 then CW := RW;
+  if (Mask and CWHeight) <> 0 then CH := RH;
+  ConstrainClient(C, CW, CH);
+  GravityFrame(C, RX, RY, E, GX, GY);
+  { gravity anchors the frame on the right / bottom for the east / south kinds }
+  if (Mask and CWX) <> 0 then NX := GX;
+  if (Mask and CWY) <> 0 then NY := GY;
+  SetFrameGeometry(C, NX, NY, CW + E.L + E.R, CH + E.T + E.B);
+end;
+
 procedure TWM.OnConfigureRequest(var Ev: TXConfigureRequestEvent);
 var
   C: TClient;
   Chg: TXWindowChanges;
-  E: TExt;
-  CW, CH, NX, NY: Integer;
 begin
   C := FindClient(Ev.window);
   if C = nil then
@@ -2267,18 +2319,32 @@ begin
     XConfigureWindow(FDpy, Ev.window, Ev.value_mask, @Chg);
     Exit;
   end;
-  E := Ext(C);
-  if C.Maximized or C.Fullscreen then begin SendConfigure(C); Exit; end;
-  if C.Shaded then SetShaded(C, False);
-  ClientSizeOf(C, CW, CH);
-  NX := C.X; NY := C.Y;
-  if (Ev.value_mask and CWWidth) <> 0 then CW := Ev.width;
-  if (Ev.value_mask and CWHeight) <> 0 then CH := Ev.height;
-  if (Ev.value_mask and CWX) <> 0 then NX := Ev.x - E.L;
-  if (Ev.value_mask and CWY) <> 0 then NY := Ev.y - E.T;
-  ConstrainClient(C, CW, CH);
-  SetFrameGeometry(C, NX, NY, CW + E.L + E.R, CH + E.T + E.B);
+  ApplyRequest(C, Ev.value_mask, Ev.x, Ev.y, Ev.width, Ev.height);
   if ((Ev.value_mask and CWStackMode) <> 0) and (Ev.detail = Above) then RaiseClient(C);
+end;
+
+{ _NET_MOVERESIZE_WINDOW (wmctrl -e): data.l = flags, x, y, width, height.
+  flags: low byte gravity (0 = the window's own), bits 8-11 = x y width height present. }
+procedure TWM.OnMoveResizeWindow(C: TClient; var Ev: TXClientMessageEvent);
+var
+  Fl: culong;
+  Mask: culong;
+  Saved: Integer;
+begin
+  Fl := culong(Ev.data.l[0]);
+  Mask := 0;
+  if (Fl and (1 shl 8)) <> 0 then Mask := Mask or CWX;
+  if (Fl and (1 shl 9)) <> 0 then Mask := Mask or CWY;
+  if (Fl and (1 shl 10)) <> 0 then Mask := Mask or CWWidth;
+  if (Fl and (1 shl 11)) <> 0 then Mask := Mask or CWHeight;
+  if Mask = 0 then Exit;
+  Saved := C.Gravity;
+  if ((Fl and 255) >= 1) and ((Fl and 255) <= 10) then C.Gravity := Integer(Fl and 255);
+  try
+    ApplyRequest(C, Mask, Integer(Ev.data.l[1]), Integer(Ev.data.l[2]), Integer(Ev.data.l[3]), Integer(Ev.data.l[4]));
+  finally
+    C.Gravity := Saved;
+  end;
 end;
 
 procedure TWM.OnUnmap(var Ev: TXUnmapEvent);
@@ -2476,6 +2542,50 @@ begin
   end;
 end;
 
+{ _NET_WM_MOVERESIZE: an app (client-side decorations, frameless Qt windows)
+  asks us to start a move or resize that it cannot run itself.
+  data.l = x_root, y_root, direction, button, source. }
+procedure TWM.OnMoveResize(C: TClient; var Ev: TXClientMessageEvent);
+const
+  Dirs: array[0..7] of THitKind = (hkNW, hkN, hkNE, hkE, hkSE, hkS, hkSW, hkW);
+var
+  Dir: Integer;
+  Rw, Cw: TWindow;
+  Rx, Ry, Wx, Wy: cint;
+  Mask: cuint;
+begin
+  Dir := Integer(Ev.data.l[2]);
+  if Dir = 11 then    { _NET_WM_MOVERESIZE_CANCEL }
+  begin
+    if (FDrag <> dgNone) and (FDragClient = C) then
+    begin
+      SetFrameGeometry(C, FDragX, FDragY, FDragW, FDragH);
+      EndDrag;
+    end
+    else if (FKbMode <> kmNone) and (FKbClient = C) then EndKb(False);
+    Exit;
+  end;
+  if (FDrag <> dgNone) or (FKbMode <> kmNone) or FMenu.IsOpen then Exit;
+  if (Dir = 9) or (Dir = 10) then    { keyboard variants: same as Alt+F8 / Alt+F7 }
+  begin
+    if C <> FFocused then FocusClient(C, CurrentTime);
+    if Dir = 9 then StartKb(kmResize, CurrentTime) else StartKb(kmMove, CurrentTime);
+    Exit;
+  end;
+  if (Dir < 0) or (Dir > 8) then Exit;
+  { the request is only valid while a button is held; a stale one would
+    leave us waiting for a release that never comes }
+  if not XQueryPointer(FDpy, FRoot, @Rw, @Cw, @Rx, @Ry, @Wx, @Wy, @Mask) then Exit;
+  Log(Format('moveresize dir=%d mask=%x', [Dir, Mask]));
+  if (Mask and (Button1Mask or Button2Mask or Button3Mask)) = 0 then Exit;
+  RaiseClient(C);
+  if Dir = 8 then
+    BeginDrag(C, dgMove, hkNone, Rx, Ry, CurrentTime)
+  else
+    BeginDrag(C, dgResize, Dirs[Dir], Rx, Ry, CurrentTime);
+  Log(Format('moveresize drag=%d', [Ord(FDrag)]));
+end;
+
 procedure TWM.OnClientMessage(var Ev: TXClientMessageEvent);
 var
   C: TClient;
@@ -2511,6 +2621,10 @@ begin
   end;
   if Ev.message_type = aActive then
     Activate(C, CurrentTime)
+  else if Ev.message_type = aMoveResize then
+    OnMoveResize(C, Ev)
+  else if Ev.message_type = aMoveResizeWin then
+    OnMoveResizeWindow(C, Ev)
   else if Ev.message_type = aWmDesktop then
   begin
     if culong(Ev.data.l[0]) = $FFFFFFFF then MoveToDesktop(C, -1)

@@ -33,7 +33,7 @@ Run it ONLY on a display you mean to manage: `DISPLAY=:99 ./tiewm` (it refuses t
 the root; `TIEWM_THEME`, `TIEWM_FONT`, `TIEWM_DEBUG=1` are the only settings so far). SIGTERM/SIGINT hand all
 windows back to the root cleanly.
 
-Works (266 scenario checks, `tools/wmtest.sh`, scratch Xvfb on :99 only): manage/adopt/unmanage, centred
+Works (281 scenario checks, `tools/wmtest.sh`, scratch Xvfb on :99 only): manage/adopt/unmanage, centred
 placement (honours USPosition), themed frames with shape, click-to-focus with click replay to the app,
 raise on click, active/inactive repaint, title updates, titlebar drag and Alt+drag (also with Num/Caps Lock),
 Alt+right-drag resize, edge/corner resize with min-size and size-increment hints, close button
@@ -136,6 +136,14 @@ Stacking layers (found on the first real session, 2026-11-20: the full-screen pc
 panel and conky): desktop-type windows are kept at the very bottom, docks with `_NET_WM_STATE_BELOW` (conky) just
 above them, normal frames above that, other docks (the panel) on top; while a window is fullscreen the panel is
 left underneath. Re-applied after every raise, fullscreen change and dock/desktop mapping.
+
+App-driven moves and window gravity: `_NET_WM_MOVERESIZE` (what GTK client-side-decorated and frameless Qt windows send
+when you drag their own title area or edge): all eight resize directions, move, and the keyboard variants (same modes as
+Alt+F8 / Alt+F7); a stale request with no button held is ignored, and the pointer drag then behaves exactly like a titlebar
+drag. `_NET_MOVERESIZE_WINDOW` (`wmctrl -e`) places and sizes a window by a given gravity. Initial positions and
+ConfigureRequests now follow ICCCM `win_gravity`: with the default (NorthWest) the *frame's* corner goes where the app asked
+(as `xterm -geometry +100+100` users expect); Static puts the client itself there; the other gravities anchor the frame on
+the matching edge or centre. `_NET_WM_STATE_BELOW` and the two new messages are listed in `_NET_SUPPORTED`.
 
 Careful when testing: the live session runs a process called `tiewm` too, so test scripts must never `pkill` by name
 (`wmtest.sh` only signals a tiewm whose DISPLAY is :99).

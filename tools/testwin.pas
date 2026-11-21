@@ -16,6 +16,8 @@ program testwin;
             [-y desktop|dock|dockbelow]  set _NET_WM_WINDOW_TYPE (dockbelow also sets STATE_BELOW)
             [-P 0xID]                 mark as transient for that window
             [-i seconds]              iconify itself (XIconifyWindow) after N seconds
+            [-G n]                    win_gravity 1-10 (with -p; default Static=10, 0 = leave unset = NorthWest)
+            [-R dir]                  on a button press send _NET_WM_MOVERESIZE with that direction (0-11)
             [-n]                      ignore WM_DELETE_WINDOW (do not advertise it)
   Defaults: "testwin" 300x200 ff00ff, runs 30 s. Exits 0 on WM_DELETE_WINDOW. }
 
@@ -27,7 +29,7 @@ uses
 var
   Dpy: PDisplay;
   Win: TWindow;
-  Ev: TXEvent;
+  Ev, Msg: TXEvent;
   Title, NewTitle: string;
   W, H, Secs, MinW, MinH, PosX, PosY, ChangeAfter, IconifyAfter: Integer;
   ParentId: QWord;
@@ -36,6 +38,7 @@ var
   MotifMode, MotifLater: string;
   ClassInst, ClassName: string;
   IconSpec, IconLater, StateSpec, HintState, UnmappedMode: string;
+  MoveResizeDir, Gravity: Integer;
   WmHints: TXWMHints;
   WmStateProp: array[0..1] of culong;
   AWmState: TAtom;
@@ -143,6 +146,7 @@ begin
   MotifMode := ''; MotifLater := ''; MotifAfter := 0; MotifChanged := False;
   ClassInst := ''; ClassName := '';
   StateSpec := ''; HintState := ''; UnmappedMode := ''; IconSpec := ''; IconLater := ''; IconAfter := 0; IconChanged := False;
+  MoveResizeDir := -1; Gravity := 10;
   I := 1;
   while I <= ParamCount do
   begin
@@ -170,6 +174,8 @@ begin
       else if Opt = '-S' then StateSpec := S
       else if Opt = '-W' then HintState := S
       else if Opt = '-U' then UnmappedMode := S
+      else if Opt = '-R' then MoveResizeDir := StrToInt(S)
+      else if Opt = '-G' then Gravity := StrToInt(S)
       else if Opt = '-I' then IconSpec := S
       else if Opt = '-J' then
       begin
@@ -203,6 +209,7 @@ begin
   begin
     if MinW > 0 then begin Hints.flags := Hints.flags or PMinSize; Hints.min_width := MinW; Hints.min_height := MinH; end;
     if HavePos then begin Hints.flags := Hints.flags or USPosition; Hints.x := PosX; Hints.y := PosY; end;
+    if HavePos and (Gravity > 0) then begin Hints.flags := Hints.flags or PWinGravity; Hints.win_gravity := Gravity; end;
     XSetWMNormalHints(Dpy, Win, @Hints);
   end;
   if HavePos then XMoveWindow(Dpy, Win, PosX, PosY);
@@ -293,7 +300,27 @@ begin
             [Ev.xconfigure.x, Ev.xconfigure.y, Ev.xconfigure.width, Ev.xconfigure.height,
              Ord(Ev.xconfigure.send_event <> 0)]));
         ButtonPress:
+        begin
           Say(Format('ButtonPress x=%d y=%d button=%d', [Ev.xbutton.x, Ev.xbutton.y, Ev.xbutton.button]));
+          if MoveResizeDir >= 0 then
+          begin
+            XUngrabPointer(Dpy, CurrentTime);   { like GTK/Qt: release the implicit grab so the WM can take over }
+            FillChar(Msg, SizeOf(Msg), 0);
+            Msg._type := ClientMessage;
+            Msg.xclient.window := Win;
+            Msg.xclient.message_type := XInternAtom(Dpy, '_NET_WM_MOVERESIZE', 0);
+            Msg.xclient.format := 32;
+            Msg.xclient.data.l[0] := Ev.xbutton.x_root;
+            Msg.xclient.data.l[1] := Ev.xbutton.y_root;
+            Msg.xclient.data.l[2] := MoveResizeDir;
+            Msg.xclient.data.l[3] := Ev.xbutton.button;
+            Msg.xclient.data.l[4] := 1;
+            XSendEvent(Dpy, DefaultRootWindow(Dpy), 0,
+              SubstructureRedirectMask or SubstructureNotifyMask, @Msg);
+            XFlush(Dpy);
+            Say('sent _NET_WM_MOVERESIZE ' + IntToStr(MoveResizeDir));
+          end;
+        end;
         MapNotify: Say('MapNotify');
         UnmapNotify: Say('UnmapNotify');
         FocusIn: Say('FocusIn');

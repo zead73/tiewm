@@ -930,6 +930,63 @@ G=$(absgeom "$PI"); [ "$(field "$G" x)" -eq 300 ] && [ "$(field "$G" y)" -eq 200
 grep -q '(minimized)' "$TMP/tiewm.log"; check "the log notes minimized windows" $?
 stop_clients
 
+echo "== 34. _NET_WM_MOVERESIZE: apps asking the WM to start a move or resize"
+stop_wm; stop_clients
+export TIEWM_CONFIG="$TMP/none.conf"; start_wm
+newwin mr -t "App-driven move" -w 300 -h 200 -c 5588aa -s 300 -p 400,300 -R 8; MR=$LAST_ID
+G0=$(absgeom "$MR"); X0=$(field "$G0" x); Y0=$(field "$G0" y); W0=$(field "$G0" w); H0=$(field "$G0" h)
+CX=$((X0+W0/2)); CY=$((Y0+H0/2))
+"$XDO" move $CX $CY down 1 sleep 400 move $((CX+80)) $((CY+40)) sleep 300 up 1; sec 0.6
+grep -q 'sent _NET_WM_MOVERESIZE 8' "$TMP/mr.log"; check "the app sent the request on a button press" $?
+G=$(absgeom "$MR"); [ "$(field "$G" x)" -eq $((X0+80)) ] && [ "$(field "$G" y)" -eq $((Y0+40)) ]; check "direction MOVE: dragging the pointer moves the window by +80,+40 ($G)" $?
+"$XDO" move $((CX+80)) $((CY+40)) sleep 300 move $((CX+200)) $((CY+100)) sleep 300
+G2=$(absgeom "$MR"); [ "$(field "$G2" x)" -eq "$(field "$G" x)" ]; check "after the button is released the drag is over (window stays put)" $?
+stop_clients
+newwin mr2 -t "App-driven resize SE" -w 300 -h 200 -c 5588aa -s 300 -p 400,300 -R 4; MR=$LAST_ID
+G0=$(absgeom "$MR"); X0=$(field "$G0" x); Y0=$(field "$G0" y); W0=$(field "$G0" w); H0=$(field "$G0" h)
+CX=$((X0+W0/2)); CY=$((Y0+H0/2))
+"$XDO" move $CX $CY down 1 sleep 400 move $((CX+50)) $((CY+30)) sleep 300 up 1; sec 0.6
+G=$(absgeom "$MR"); [ "$(field "$G" w)" -eq $((W0+50)) ] && [ "$(field "$G" h)" -eq $((H0+30)) ] && [ "$(field "$G" x)" -eq "$X0" ]; check "direction BOTTOMRIGHT: grows by +50,+30 with the top-left fixed ($G)" $?
+stop_clients
+newwin mr3 -t "App-driven resize NW" -w 300 -h 200 -c 5588aa -s 300 -p 400,300 -R 0; MR=$LAST_ID
+G0=$(absgeom "$MR"); X0=$(field "$G0" x); Y0=$(field "$G0" y); W0=$(field "$G0" w); H0=$(field "$G0" h)
+CX=$((X0+W0/2)); CY=$((Y0+H0/2))
+"$XDO" move $CX $CY down 1 sleep 400 move $((CX-40)) $((CY-20)) sleep 300 up 1; sec 0.6
+G=$(absgeom "$MR"); [ "$(field "$G" w)" -eq $((W0+40)) ] && [ "$(field "$G" h)" -eq $((H0+20)) ] && [ "$(field "$G" x)" -eq $((X0-40)) ] && [ "$(field "$G" y)" -eq $((Y0-20)) ]; check "direction TOPLEFT: grows by +40,+20, bottom-right corner fixed ($G)" $?
+stop_clients
+newwin mr4 -t "App-driven keyboard move" -w 300 -h 200 -c 5588aa -s 300 -p 400,300 -R 10; MR=$LAST_ID
+G0=$(absgeom "$MR"); X0=$(field "$G0" x); Y0=$(field "$G0" y); W0=$(field "$G0" w); H0=$(field "$G0" h)
+"$XDO" move $((X0+W0/2)) $((Y0+H0/2)) click 1; sec 0.6
+"$XDO" key Right key Right key Down key Return; sec 0.6
+G=$(absgeom "$MR"); [ "$(field "$G" x)" -eq $((X0+20)) ] && [ "$(field "$G" y)" -eq $((Y0+10)) ]; check "direction MOVE_KEYBOARD starts the Alt+F7 mode: arrows then Return move it +20,+10 ($G)" $?
+stop_clients
+xprop -root _NET_SUPPORTED | grep -q _NET_WM_MOVERESIZE; check "_NET_WM_MOVERESIZE is listed in _NET_SUPPORTED" $?
+xprop -root _NET_SUPPORTED | grep -q _NET_WM_STATE_BELOW; check "_NET_WM_STATE_BELOW is listed too" $?
+stop_clients
+
+echo "== 35. window gravity (ICCCM) and _NET_MOVERESIZE_WINDOW"
+stop_wm; stop_clients
+export TIEWM_CONFIG="$TMP/none.conf"; start_wm
+newwin g0 -t "Gravity default" -w 300 -h 200 -c 8855aa -s 300 -p 400,300 -G 0; GA=$LAST_ID
+G=$(absgeom "$GA"); [ "$(field "$G" x)" -eq $((400+M)) ] && [ "$(field "$G" y)" -eq $((300+T)) ]; check "no gravity set (NorthWest): the FRAME's corner is at the requested 400,300 ($G)" $?
+stop_clients
+newwin g1 -t "Gravity static" -w 300 -h 200 -c 8855aa -s 300 -p 400,300 -G 10; GA=$LAST_ID
+G=$(absgeom "$GA"); [ "$(field "$G" x)" -eq 400 ] && [ "$(field "$G" y)" -eq 300 ]; check "Static: the CLIENT is at 400,300 ($G)" $?
+stop_clients
+newwin g2 -t "Gravity SE" -w 300 -h 200 -c 8855aa -s 300 -p 400,300 -G 9; GA=$LAST_ID
+G=$(absgeom "$GA"); [ "$(field "$G" x)" -eq $((400-M)) ] && [ "$(field "$G" y)" -eq $((300-M)) ]; check "SouthEast: the frame's bottom-right corner follows the client's ($G)" $?
+stop_clients
+newwin g3 -t "Gravity center" -w 300 -h 200 -c 8855aa -s 300 -p 400,300 -G 5; GA=$LAST_ID
+G=$(absgeom "$GA"); [ "$(field "$G" x)" -eq 400 ] && [ "$(field "$G" y)" -eq $((300-(T+M)/2+T)) ]; check "Center: centred on the requested point ($G)" $?
+stop_clients
+newwin g4 -t "Move request" -w 300 -h 200 -c 8855aa -s 300 -p 400,300 -G 10; GA=$LAST_ID
+wmctrl -i -r "$GA" -e 10,200,150,-1,-1; sec 0.6
+G=$(absgeom "$GA"); [ "$(field "$G" x)" -eq 200 ] && [ "$(field "$G" y)" -eq 150 ] && [ "$(field "$G" w)" -eq 300 ]; check "wmctrl -e with Static gravity places the client at 200,150, size kept ($G)" $?
+wmctrl -i -r "$GA" -e 1,200,150,400,250; sec 0.6
+G=$(absgeom "$GA"); [ "$(field "$G" x)" -eq $((200+M)) ] && [ "$(field "$G" y)" -eq $((150+T)) ] && [ "$(field "$G" w)" -eq 400 ] && [ "$(field "$G" h)" -eq 250 ]; check "wmctrl -e with NorthWest gravity puts the frame at 200,150 and resizes to 400x250 ($G)" $?
+xprop -root _NET_SUPPORTED | grep -q _NET_MOVERESIZE_WINDOW; check "_NET_MOVERESIZE_WINDOW is listed in _NET_SUPPORTED" $?
+stop_clients
+
 stop_wm
 
 echo
