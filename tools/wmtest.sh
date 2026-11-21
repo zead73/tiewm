@@ -808,6 +808,46 @@ import -window root "$TMP/hv-away.png" 2>/dev/null; crop "$TMP/hv-away.png" "$SX
 [ "$(frameh "$HV")" = "$T" ]; check "a normal click on the same button still works (shades)" $?
 stop_clients
 
+echo "== 31. app icon on the menu button (_NET_WM_ICON, theme show_app_icon, config override)"
+stop_wm; stop_clients
+export TIEWM_CONFIG="$TMP/none.conf"; start_wm
+iconpx() {   # centre of the menu button of the (focused) window whose client is at $1,$2
+  import -window root "$TMP/icon.png" 2>/dev/null
+  magick "$TMP/icon.png" -format '%[hex:p{'$(( $1 + 13 ))','$(( $2 - 10 ))'}]' info:
+}
+newwin i1 -t "Icon 16" -w 300 -h 200 -c 444444 -s 60 -p 400,300 -I ff00ff:16
+[ "$(iconpx 400 300)" = "FF00FF" ]; check "a 16x16 icon is drawn in the middle of the menu button" $?
+stop_clients
+newwin i2 -t "Two sizes" -w 300 -h 200 -c 444444 -s 60 -p 400,300 -I ff0000:48,0000ff:16
+[ "$(iconpx 400 300)" = "0000FF" ]; check "with several sizes the one that fits (16) is used, not the big one" $?
+stop_clients
+newwin i3 -t "Only big" -w 300 -h 200 -c 444444 -s 60 -p 400,300 -I ff0000:48
+[ "$(iconpx 400 300)" = "FF0000" ]; check "a big icon is scaled down to fit" $?
+stop_clients
+newwin i4 -t "Only small" -w 300 -h 200 -c 444444 -s 60 -p 400,300 -I 00ff00:8
+[ "$(iconpx 400 300)" = "00FF00" ]; check "a small icon is scaled up to fit" $?
+stop_clients
+newwin i5 -t "No icon" -w 300 -h 200 -c 444444 -s 60 -p 400,300
+[ "$(iconpx 400 300)" = "E9ECEF" ]; check "an app without an icon gets the generic window glyph" $?
+stop_clients
+newwin i6 -t "Icon changes" -w 300 -h 200 -c 444444 -s 60 -p 400,300 -I ff00ff:16 -J 00ffff,2
+[ "$(iconpx 400 300)" = "FF00FF" ]; check "icon before the change" $?
+sleep 2.6
+[ "$(iconpx 400 300)" = "00FFFF" ]; check "a changed _NET_WM_ICON is picked up and repainted" $?
+stop_wm; stop_clients
+printf 'show_app_icon = false\n' >"$TMP/c13.conf"; export TIEWM_CONFIG="$TMP/c13.conf"; start_wm
+newwin i7 -t "Icons off" -w 300 -h 200 -c 444444 -s 60 -p 400,300 -I ff00ff:16
+[ "$(iconpx 400 300)" != "FF00FF" ] && [ "$(iconpx 400 300)" != "E9ECEF" ]; check "show_app_icon = false: no icon at all" $?
+stop_wm; stop_clients
+printf 'show_app_icon = true\ntheme = Moheli\n' >"$TMP/c14.conf"; export TIEWM_CONFIG="$TMP/c14.conf"; start_wm
+newwin i8 -t "Forced on" -w 300 -h 200 -c 444444 -s 60 -p 400,300 -I ff00ff:16
+xprop -id "$LAST_ID" _NET_FRAME_EXTENTS >/dev/null; import -window root "$TMP/icon8.png" 2>/dev/null
+magick "$TMP/icon8.png" -crop 120x40+395+270 +repage txt:- | grep -qi 'FF00FF'; check "show_app_icon = true shows it even where the theme does not ask for one (Moheli)" $?
+stop_wm; stop_clients
+printf 'show_app_icon = maybe\n' >"$TMP/c15.conf"
+"$WM" --check-config "$TMP/c15.conf" 2>&1 | grep -q 'line 1: show_app_icon must be'; check "a bad show_app_icon value is only a warning" $?
+export TIEWM_CONFIG="$TMP/none.conf"; start_wm
+
 stop_wm
 
 echo

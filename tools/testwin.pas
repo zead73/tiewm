@@ -5,6 +5,8 @@ program testwin;
     testwin [-t title] [-w width] [-h height] [-c rrggbb] [-s seconds]
             [-m minw,minh] [-p x,y]   program-specified position (USPosition)
             [-T newtitle,afterseconds]  change the title later
+            [-I rrggbb[:size][,rrggbb[:size]...]]  set _NET_WM_ICON (solid squares)
+            [-J rrggbb,seconds]       replace the icon later (32x32)
             [-C instance,class]       set WM_CLASS
             [-D none|all|notitle|border|title]  set _MOTIF_WM_HINTS decorations before mapping
             [-M mode,seconds]         change _MOTIF_WM_HINTS later (same modes)
@@ -17,7 +19,7 @@ program testwin;
 {$mode objfpc}{$H+}
 
 uses
-  SysUtils, BaseUnix, ctypes, x, xlib, xutil, xatom;
+  SysUtils, Classes, BaseUnix, ctypes, x, xlib, xutil, xatom;
 
 var
   Dpy: PDisplay;
@@ -30,6 +32,9 @@ var
   WinType: string;
   MotifMode, MotifLater: string;
   ClassInst, ClassName: string;
+  IconSpec, IconLater: string;
+  IconAfter: Integer;
+  IconChanged: Boolean;
   CHint: TXClassHint;
   MotifAfter: Integer;
   MotifChanged: Boolean;
@@ -49,6 +54,42 @@ procedure Say(const Msg: string);
 begin
   WriteLn(Msg);
   Flush(Output);
+end;
+
+procedure SetIcons(Dpy: PDisplay; Win: TWindow; const Spec: string);
+var
+  Parts: TStringList;
+  Arr: array of culong;
+  I, J, Sz, N, Q: Integer;
+  Col: LongWord;
+  Item: string;
+  A: TAtom;
+begin
+  Parts := TStringList.Create;
+  try
+    Parts.Delimiter := ',';
+    Parts.StrictDelimiter := True;
+    Parts.DelimitedText := Spec;
+    SetLength(Arr, 0);
+    for I := 0 to Parts.Count - 1 do
+    begin
+      Item := Parts[I];
+      Sz := 16;
+      Q := Pos(':', Item);
+      if Q > 0 then begin Sz := StrToInt(Copy(Item, Q + 1, 9)); Item := Copy(Item, 1, Q - 1); end;
+      Col := LongWord($FF000000) or LongWord(StrToInt('$' + Item));
+      N := Length(Arr);
+      SetLength(Arr, N + 2 + Sz * Sz);
+      Arr[N] := Sz;
+      Arr[N + 1] := Sz;
+      for J := 0 to Sz * Sz - 1 do Arr[N + 2 + J] := Col;
+    end;
+    if Length(Arr) = 0 then Exit;
+    A := XInternAtom(Dpy, '_NET_WM_ICON', 0);
+    XChangeProperty(Dpy, Win, A, XA_CARDINAL, 32, PropModeReplace, PByte(@Arr[0]), Length(Arr));
+  finally
+    Parts.Free;
+  end;
 end;
 
 procedure SetMotif(Dpy: PDisplay; Win: TWindow; const Mode: string);
@@ -73,6 +114,7 @@ begin
   IconifyAfter := -1; ParentId := 0; Iconified := False; WinType := '';
   MotifMode := ''; MotifLater := ''; MotifAfter := 0; MotifChanged := False;
   ClassInst := ''; ClassName := '';
+  IconSpec := ''; IconLater := ''; IconAfter := 0; IconChanged := False;
   I := 1;
   while I <= ParamCount do
   begin
@@ -97,6 +139,11 @@ begin
       end
       else if Opt = '-y' then WinType := S
       else if Opt = '-D' then MotifMode := S
+      else if Opt = '-I' then IconSpec := S
+      else if Opt = '-J' then
+      begin
+        P := Pos(',', S); IconLater := Copy(S, 1, P - 1); IconAfter := StrToInt(Copy(S, P + 1, 99));
+      end
       else if Opt = '-C' then
       begin
         P := Pos(',', S); ClassInst := Copy(S, 1, P - 1); ClassName := Copy(S, P + 1, 99);
@@ -133,6 +180,7 @@ begin
   if not NoDelete then XSetWMProtocols(Dpy, Win, @WmDelete, 1);
   if ParentId <> 0 then XSetTransientForHint(Dpy, Win, ParentId);
   if MotifMode <> '' then SetMotif(Dpy, Win, MotifMode);
+  if IconSpec <> '' then SetIcons(Dpy, Win, IconSpec);
   if ClassName <> '' then
   begin
     CHint.res_name := PChar(ClassInst);
@@ -168,6 +216,13 @@ begin
       XFlush(Dpy);
       Changed := True;
       Say('title changed to ' + NewTitle);
+    end;
+    if (IconLater <> '') and (not IconChanged) and (Now_ - T0 >= IconAfter) then
+    begin
+      SetIcons(Dpy, Win, IconLater + ':32');
+      XFlush(Dpy);
+      IconChanged := True;
+      Say('icon changed');
     end;
     if (MotifLater <> '') and (not MotifChanged) and (Now_ - T0 >= MotifAfter) then
     begin

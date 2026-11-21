@@ -52,6 +52,7 @@ type
     Pressed, Prelight: Char; { button letter drawn in that state, or #0 }
     Toggled: string;         { button letters drawn in their toggled form }
     Shaded: Boolean;         { title row only: no sides/bottom drawn, no resize edges }
+    Icon: TImg;              { drawn centred on the menu (O) button; nil = none }
   end;
 
   { TXfwmTheme }
@@ -207,6 +208,7 @@ begin
   Result.Prelight := #0;
   Result.Toggled := '';
   Result.Shaded := False;
+  Result.Icon := nil;
 end;
 
 { TXfwmTheme }
@@ -553,6 +555,10 @@ begin
     Img := ButtonImg(Rects[I].Letter, St, O);
     if Img <> nil then Dst.Blend(Img, Rects[I].X, Rects[I].Y);
   end;
+  if O.Icon <> nil then
+    for I := 0 to High(Rects) do
+      if Rects[I].Letter = 'O' then
+        Dst.Blend(O.Icon, Rects[I].X + (Rects[I].W - O.Icon.W) div 2, Rects[I].Y + (Rects[I].H - O.Icon.H) div 2);
   if O.Shaded then Exit;
   { sides and bottom }
   Img := StatePart('left', St);

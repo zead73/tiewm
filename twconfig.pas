@@ -23,7 +23,7 @@ unit twconfig;
 interface
 
 uses
-  SysUtils, Classes, ctypes, BaseUnix, x, xlib, twtheme, twlog;
+  SysUtils, StrUtils, Classes, ctypes, BaseUnix, x, xlib, twtheme, twlog;
 
 type
   TKeyAction = (kaClose, kaCycle, kaCycleBack, kaMaximize, kaIconify, kaFullscreen,
@@ -49,6 +49,7 @@ type
   TConfig = record
     Theme, TitleFont, MenuFont, ButtonLayout, TitleAlign: string;
     NumDesktops: Integer;
+    ShowAppIcon: Integer;          { -1 = what the theme says, 0 = never, 1 = always }
     UndecoratedBorder: Integer;    { px of resize border around windows without a titlebar, 0 = none }
     FontGreyscale: Boolean;
     FontHinting: Integer;          { 0..3, -1 = leave to fontconfig }
@@ -134,6 +135,7 @@ begin
   Result.TitleAlign := 'left';
   Result.NumDesktops := 4;
   Result.UndecoratedBorder := 0;
+  Result.ShowAppIcon := -1;
   Result.FontGreyscale := True;
   Result.FontHinting := 3;
   Result.Palette := DefaultPalette;
@@ -550,6 +552,12 @@ begin
     if (N >= 1) and (N <= 20) then C.NumDesktops := N
     else Warn(C, Format('line %d: desktops must be 1..20, not "%s"', [Line, V]));
   end
+  else if K = 'show_app_icon' then
+  begin
+    if (LowerCase(V) = 'auto') or (LowerCase(V) = 'theme') then C.ShowAppIcon := -1
+    else if ParseBool(V, B) then C.ShowAppIcon := Ord(B)
+    else Warn(C, Format('line %d: show_app_icon must be auto, true or false, not "%s"', [Line, V]));
+  end
   else if K = 'undecorated_border' then
   begin
     N := StrToIntDef(V, -1);
@@ -711,6 +719,7 @@ begin
     'button_layout = ' + C.ButtonLayout + #10 + 'title_align = ' + C.TitleAlign + #10 +
     'desktops = ' + IntToStr(C.NumDesktops) + #10 +
     'undecorated_border = ' + IntToStr(C.UndecoratedBorder) + #10 +
+    'show_app_icon = ' + IfThen(C.ShowAppIcon < 0, 'auto', BoolToStr(C.ShowAppIcon = 1, 'true', 'false')) + #10 +
     'font_greyscale = ' + BoolToStr(C.FontGreyscale, 'true', 'false') + #10 +
     'font_hinting = ' + IntToStr(C.FontHinting) + #10 +
     'log_file = ' + C.LogFile + #10 +

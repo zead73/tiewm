@@ -62,7 +62,7 @@ function PaintFrame(Dpy: PDisplay; Scr: Integer; Theme: TXfwmTheme; Font: TTitle
 { same, with the frame rolled up to its titlebar when Shaded }
 function PaintFrameEx(Dpy: PDisplay; Scr: Integer; Theme: TXfwmTheme; Font: TTitleFont;
   St: TWinState; FrameW, FrameH: Integer; const Title: string; Align: TTitleAlign; Shaded: Boolean;
-  Hover, Press: Char; out Mask: TPixmap; out TextX, BaseY: Integer): TPixmap;
+  Hover, Press: Char; Icon: TImg; out Mask: TPixmap; out TextX, BaseY: Integer): TPixmap;
 
 { Flattens Img over black into a pixmap of the given depth. }
 function ImgToPixmap(Dpy: PDisplay; Drawable: TDrawable; AVisual: PVisual; Depth: Integer;
@@ -89,7 +89,7 @@ end;
 
 function PaintFrameEx(Dpy: PDisplay; Scr: Integer; Theme: TXfwmTheme; Font: TTitleFont;
   St: TWinState; FrameW, FrameH: Integer; const Title: string; Align: TTitleAlign; Shaded: Boolean;
-  Hover, Press: Char; out Mask: TPixmap; out TextX, BaseY: Integer): TPixmap;
+  Hover, Press: Char; Icon: TImg; out Mask: TPixmap; out TextX, BaseY: Integer): TPixmap;
 var
   Img: TImg;
   O: TFrameOpts;
@@ -108,6 +108,7 @@ begin
   O.Shaded := Shaded;
   O.Prelight := Hover;
   O.Pressed := Press;
+  O.Icon := Icon;
   Theme.TitleSpan(O, FrameW, L, R);
   if St = wsActive then
   begin
@@ -253,7 +254,7 @@ function PaintFrame(Dpy: PDisplay; Scr: Integer; Theme: TXfwmTheme; Font: TTitle
   St: TWinState; FrameW, FrameH: Integer; const Title: string; Align: TTitleAlign;
   out Mask: TPixmap; out TextX, BaseY: Integer): TPixmap;
 begin
-  Result := PaintFrameEx(Dpy, Scr, Theme, Font, St, FrameW, FrameH, Title, Align, False, #0, #0, Mask, TextX, BaseY);
+  Result := PaintFrameEx(Dpy, Scr, Theme, Font, St, FrameW, FrameH, Title, Align, False, #0, #0, nil, Mask, TextX, BaseY);
 end;
 
 function ImgToPixmap(Dpy: PDisplay; Drawable: TDrawable; AVisual: PVisual; Depth: Integer;

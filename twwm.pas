@@ -26,6 +26,7 @@ type
     Maximized, Fullscreen, Iconic, Above, Below, Shaded: Boolean;
     Decorated: Boolean;           { False: no frame graphics at all (the app draws its own) }
     ResName, ResClass: string;    { WM_CLASS: instance and class }
+    Icon: TImg;                   { scaled _NET_WM_ICON for the menu button, nil = none set }
     HoverLetter, PressLetter: Char;     { titlebar button under the pointer / being held down, #0 = none }
     PaintedHover, PaintedPress: Char;
     DecorUser: Integer;           { 0 = follow the app's hints, 1 = user wants a titlebar, 2 = user wants none }
@@ -78,7 +79,7 @@ type
     aSupported, aNetWmName, aActive, aClientList, aClientListStk, aFrameExtents: TAtom;
     aNetWmState, aMaxVert, aMaxHorz, aCloseWindow, aWindowType: TAtom;
     aTypeDock, aTypeDesktop, aTypeMenu, aTypeDropdown, aTypePopup, aTypeTooltip, aTypeNotification, aTypeCombo, aTypeDnd: TAtom;
-    aHidden, aFullscreen, aWmDesktop, aBelow, aAbove, aShaded, aSticky, aDeskNames, aMotif: TAtom;
+    aHidden, aFullscreen, aWmDesktop, aBelow, aAbove, aShaded, aSticky, aDeskNames, aMotif, aNetWmIcon: TAtom;
     aStrut, aStrutPartial, aNumDesktops, aCurDesktop, aWorkarea, aDeskGeom, aDeskViewport, aSupportingCheck: TAtom;
     { drag state }
     FDrag: TDragKind;
@@ -89,6 +90,7 @@ type
     FKbMode: TKbMode;
     FKbClient: TClient;
     FKbX, FKbY, FKbW, FKbH: Integer;
+    FGenericIcon: TImg;
     FMenu: TPopupMenu;
     FMenuFont: TTitleFont;
     FMenuClient: TClient;
@@ -147,6 +149,8 @@ type
     procedure SetShaded(C: TClient; On: Boolean);
     function WantsDecorations(Win: TWindow): Boolean;
     procedure ReadClass(C: TClient);
+    procedure ReadIcon(C: TClient);
+    function ShowIcon: Boolean;
     procedure SetHover(C: TClient; L: Char);
     procedure OnLeave(var Ev: TXCrossingEvent);
     function HitFor(C: TClient; X, Y: Integer): THit;
@@ -214,6 +218,65 @@ const
   CleanLocks = LockMask or Mod2Mask;   { Caps Lock, Num Lock }
   DoubleClickMs = 400;
 
+const
+  IconSize = 16;
+
+{ a plain window glyph for applications that set no icon }
+function MakeGenericIcon(Size: Integer): TImg;
+var
+  X, Y: Integer;
+  Col: LongWord;
+begin
+  Result := TImg.Create(Size, Size);
+  for Y := 1 to Size - 3 do
+    for X := 1 to Size - 2 do
+    begin
+      if (X = 1) or (X = Size - 2) or (Y = 1) or (Y = Size - 3) then Col := $FF6A7380
+      else if Y <= 4 then Col := $FF5A7FB5
+      else Col := $FFE9ECEF;
+      Result.SetPx(X, Y, Col);
+    end;
+end;
+
+{ Area-averaged scale of an ARGB icon into a Size x Size image, keeping the aspect ratio. }
+function ScaleIcon(Src: PCULong; W, H, Size: Integer): TImg;
+var
+  DW, DH, OX, OY, DX, DY, SX, SY, X0, X1, Y0, Y1, Cnt: Integer;
+  SumA, SumR, SumG, SumB: Int64;
+  P: LongWord;
+  A: Int64;
+begin
+  Result := TImg.Create(Size, Size);
+  if W >= H then begin DW := Size; DH := Size * H div W; end
+  else begin DH := Size; DW := Size * W div H; end;
+  if DW < 1 then DW := 1;
+  if DH < 1 then DH := 1;
+  OX := (Size - DW) div 2;
+  OY := (Size - DH) div 2;
+  for DY := 0 to DH - 1 do
+    for DX := 0 to DW - 1 do
+    begin
+      X0 := DX * W div DW; X1 := (DX + 1) * W div DW; if X1 <= X0 then X1 := X0 + 1;
+      Y0 := DY * H div DH; Y1 := (DY + 1) * H div DH; if Y1 <= Y0 then Y1 := Y0 + 1;
+      SumA := 0; SumR := 0; SumG := 0; SumB := 0; Cnt := 0;
+      for SY := Y0 to Y1 - 1 do
+        for SX := X0 to X1 - 1 do
+        begin
+          P := LongWord(Src[SY * W + SX] and $FFFFFFFF);
+          A := P shr 24;
+          SumA := SumA + A;
+          SumR := SumR + ((P shr 16) and 255) * A;
+          SumG := SumG + ((P shr 8) and 255) * A;
+          SumB := SumB + (P and 255) * A;
+          Inc(Cnt);
+        end;
+      if (SumA > 0) and (Cnt > 0) then
+        Result.SetPx(OX + DX, OY + DY,
+          (LongWord(SumA div Cnt) shl 24) or (LongWord(SumR div SumA) shl 16) or
+          (LongWord(SumG div SumA) shl 8) or LongWord(SumB div SumA));
+    end;
+end;
+
 { ---- error handlers ---- }
 
 function StartupErrorHandler(Dpy: PDisplay; Err: PXErrorEvent): cint; cdecl;
@@ -272,6 +335,7 @@ begin
   MC.HoverBack := MC.Border;
   MC.HoverText := $FFFFFF;
   FMenu := TPopupMenu.Create(FDpy, FScr, FMenuFont, MC);
+  FGenericIcon := MakeGenericIcon(IconSize);
   FOpts := DefaultFrameOpts(FTheme);
   FOpts.Layout := FCfg.ButtonLayout;
   InternAtoms;
@@ -291,6 +355,7 @@ end;
 
 destructor TWM.Destroy;
 begin
+  FGenericIcon.Free;
   FMenu.Free;
   FMenuFont.Free;
   FFont.Free;
@@ -330,6 +395,7 @@ begin
   aAbove := A('_NET_WM_STATE_ABOVE');
   aShaded := A('_NET_WM_STATE_SHADED');
   aMotif := A('_MOTIF_WM_HINTS');
+  aNetWmIcon := A('_NET_WM_ICON');
   aSticky := A('_NET_WM_STATE_STICKY');
   aDeskNames := A('_NET_DESKTOP_NAMES');
   aStrut := A('_NET_WM_STRUT'); aStrutPartial := A('_NET_WM_STRUT_PARTIAL');
@@ -889,6 +955,7 @@ var
   Pm, Mask: TPixmap;
   TX, BY: Integer;
   PressNow: Char;
+  IconNow: TImg;
 begin
   if C.Fullscreen then Exit;
   Act := C = FFocused;
@@ -907,13 +974,18 @@ begin
   end;
   { a button shows "pressed" only while the pointer is still over it }
   if C.PressLetter = C.HoverLetter then PressNow := C.PressLetter else PressNow := #0;
+  IconNow := nil;
+  if ShowIcon then
+  begin
+    if C.Icon <> nil then IconNow := C.Icon else IconNow := FGenericIcon;
+  end;
   if (not Force) and C.Painted and (C.PaintedActive = Act) and (C.PaintedW = C.W) and
      (C.PaintedH = C.H) and (C.PaintedName = C.Name) and (C.PaintedHover = C.HoverLetter) and
      (C.PaintedPress = PressNow) then Exit;
   if Act then
-    Pm := PaintFrameEx(FDpy, FScr, FTheme, FFont, wsActive, C.W, C.H, C.Name, TitleAlign, C.Shaded, C.HoverLetter, PressNow, Mask, TX, BY)
+    Pm := PaintFrameEx(FDpy, FScr, FTheme, FFont, wsActive, C.W, C.H, C.Name, TitleAlign, C.Shaded, C.HoverLetter, PressNow, IconNow, Mask, TX, BY)
   else
-    Pm := PaintFrameEx(FDpy, FScr, FTheme, FFont, wsInactive, C.W, C.H, C.Name, TitleAlign, C.Shaded, C.HoverLetter, PressNow, Mask, TX, BY);
+    Pm := PaintFrameEx(FDpy, FScr, FTheme, FFont, wsInactive, C.W, C.H, C.Name, TitleAlign, C.Shaded, C.HoverLetter, PressNow, IconNow, Mask, TX, BY);
   XSetWindowBackgroundPixmap(FDpy, C.Frame, Pm);
   XShapeCombineMask(FDpy, C.Frame, ShapeBounding, 0, 0, Mask, ShapeSet);
   XClearWindow(FDpy, C.Frame);
@@ -1025,6 +1097,7 @@ begin
   C.Name := ReadName(Win);
   ReadHints(C);
   ReadClass(C);
+  ReadIcon(C);
   C.Decorated := WantsDecorations(Win);
   { a rule from the config file (matched by WM_CLASS) beats the app's own hints }
   if FindWindowRule(FCfg, C.ResName, C.ResClass, RuleTb) then
@@ -1123,6 +1196,7 @@ begin
     if (Par <> nil) and (Par <> C) and VisibleNow(Par) then FocusClient(Par, CurrentTime)
     else FocusNext(nil);
   end;
+  C.Icon.Free;
   C.Free;
   UpdateClientList;
 end;
@@ -1281,6 +1355,63 @@ end;
   field is present: with MWM_DECOR_ALL set, the listed bits are taken away from "all";
   without it, only the listed bits are wanted. No title bar wanted = the app draws its own
   frame, so we draw none (a "border only" request is treated the same). }
+function TWM.ShowIcon: Boolean;
+begin
+  if FCfg.ShowAppIcon >= 0 then Result := FCfg.ShowAppIcon = 1
+  else Result := FTheme.RCBool('show_app_icon', False);
+end;
+
+{ _NET_WM_ICON: a list of icons, each width, height, then width*height ARGB pixels. The
+  smallest one that is at least IconSize wide is used, else the biggest. }
+procedure TWM.ReadIcon(C: TClient);
+var
+  ActType: TAtom;
+  ActFmt: cint;
+  N, After: culong;
+  Data: PByte;
+  P: PCULong;
+  Pos, W, H, BestPos, BestW, BestH: culong;
+  BestArea, Area: Int64;
+  Found, BestBigEnough: Boolean;
+begin
+  FreeAndNil(C.Icon);
+  Data := nil;
+  if (XGetWindowProperty(FDpy, C.Win, aNetWmIcon, 0, 1048576, 0, XA_CARDINAL, @ActType, @ActFmt, @N, @After,
+        @Data) <> Success) or (ActType = None) or (Data = nil) then
+  begin
+    if Data <> nil then XFree(Data);
+    Exit;
+  end;
+  try
+    P := PCULong(Data);
+    Pos := 0;
+    Found := False;
+    BestBigEnough := False;
+    BestArea := 0; BestPos := 0; BestW := 0; BestH := 0;
+    while Pos + 2 <= N do
+    begin
+      W := P[Pos]; H := P[Pos + 1];
+      if (W = 0) or (H = 0) or (W > 1024) or (H > 1024) or (Pos + 2 + W * H > N) then Break;
+      Area := Int64(W) * Int64(H);
+      if (W >= IconSize) and (H >= IconSize) then
+      begin
+        if (not BestBigEnough) or (Area < BestArea) then
+        begin
+          BestBigEnough := True; BestArea := Area; BestPos := Pos; BestW := W; BestH := H; Found := True;
+        end;
+      end
+      else if (not BestBigEnough) and ((not Found) or (Area > BestArea)) then
+      begin
+        BestArea := Area; BestPos := Pos; BestW := W; BestH := H; Found := True;
+      end;
+      Inc(Pos, 2 + W * H);
+    end;
+    if Found then C.Icon := ScaleIcon(@P[BestPos + 2], BestW, BestH, IconSize);
+  finally
+    XFree(Data);
+  end;
+end;
+
 procedure TWM.ReadClass(C: TClient);
 var
   H: TXClassHint;
@@ -2341,6 +2472,11 @@ begin
   begin
     C.Name := ReadName(C.Win);
     Repaint(C, False);
+  end
+  else if Ev.atom = aNetWmIcon then
+  begin
+    ReadIcon(C);
+    if C.Decorated then Repaint(C, True);
   end
   else if Ev.atom = aMotif then
   begin

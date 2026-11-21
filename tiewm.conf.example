@@ -31,6 +31,11 @@
 # those windows then resize with Alt+right-drag or Alt+F8.
 #undecorated_border = 0
 
+# The application's icon on the menu (left-most) button: auto = what the theme asks for (show_app_icon in its
+# themerc; Daloa does), true, or false.  The icon comes from the window's _NET_WM_ICON (the smallest one that is
+# at least 16 px, scaled to fit); applications that set none get a plain window glyph.
+#show_app_icon = auto
+
 # Number of workspaces, 1..20.
 #desktops = 4
 

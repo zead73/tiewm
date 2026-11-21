@@ -33,7 +33,7 @@ Run it ONLY on a display you mean to manage: `DISPLAY=:99 ./tiewm` (it refuses t
 the root; `TIEWM_THEME`, `TIEWM_FONT`, `TIEWM_DEBUG=1` are the only settings so far). SIGTERM/SIGINT hand all
 windows back to the root cleanly.
 
-Works (223 scenario checks, `tools/wmtest.sh`, scratch Xvfb on :99 only): manage/adopt/unmanage, centred
+Works (233 scenario checks, `tools/wmtest.sh`, scratch Xvfb on :99 only): manage/adopt/unmanage, centred
 placement (honours USPosition), themed frames with shape, click-to-focus with click replay to the app,
 raise on click, active/inactive repaint, title updates, titlebar drag and Alt+drag (also with Num/Caps Lock),
 Alt+right-drag resize, edge/corner resize with min-size and size-increment hints, close button
@@ -62,6 +62,11 @@ appears/disappears, the client stays where it is). Undecorated windows still mov
 Alt+right-drag or Alt+F8, maximize/fullscreen/close/menu (Alt+space) as usual; Shade is disabled for them.
 The window menu's "No titlebar" entry (Alt+space opens it on an undecorated window) turns the frame off or on for any
 window by hand; the client never moves, and a titlebar that would land above the work area pushes the window down.
+
+App icon: the window's icon (`_NET_WM_ICON`: the smallest size that is at least 16 px, else the biggest, area-averaged
+down or up to 16x16 and centred on the menu button) is drawn there when the theme asks for it (`show_app_icon` in the
+theme's `themerc`; Daloa does) or the config says `show_app_icon = true`; `false` turns it off. Apps without an icon get a
+plain window glyph; icon changes are followed. (No icon-theme lookup by class or WM_HINTS pixmap fallback.)
 
 Button states: titlebar buttons use the theme's `prelight` image under the pointer and its `pressed` image while held
 (only while the pointer is still over the button; releasing elsewhere cancels the click). Needs the theme to ship those
@@ -141,7 +146,7 @@ unless every window has `_NET_WM_DESKTOP`.
 
 Deliberately not done: other key bindings, `--replace`,
 multi-monitor, modal dialogs, adopting windows that are
-iconic when the WM starts, app icon in the menu button, session
+iconic when the WM starts, session
 management, gravity/transient-for handling, `_NET_WM_MOVERESIZE`. Not yet run against the real LXQt
 session or lxqt-panel.
 
