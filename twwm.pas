@@ -23,7 +23,7 @@ type
     IgnoreUnmap: Integer;         { unmaps we caused ourselves }
     InputHint, HasDelete, HasTakeFocus: Boolean;
     MinW, MinH, MaxW, MaxH, IncW, IncH, BaseW, BaseH: Integer;   { client sizes }
-    Maximized, Fullscreen, Iconic, Above, Below, Shaded, Modal: Boolean;
+    Maximized, Fullscreen, Iconic, Above, Below, Shaded, Modal, StartIconic: Boolean;
     Extra: array of TAtom;        { other _NET_WM_STATE atoms the app set (skip_taskbar...): kept as they are }
     Decorated: Boolean;           { False: no frame graphics at all (the app draws its own) }
     ResName, ResClass: string;    { WM_CLASS: instance and class }
@@ -153,6 +153,7 @@ type
     procedure ReadStates(C: TClient; out Sticky: Boolean);
     function ExtraHas(C: TClient; A: TAtom): Boolean;
     procedure ExtraSet(C: TClient; A: TAtom; On: Boolean);
+    function WmStateOf(Win: TWindow): Integer;
     function ModalBlocker(C: TClient): TClient;
     function ResolveModal(C: TClient): TClient;
     procedure ReadIcon(C: TClient);
@@ -907,6 +908,19 @@ begin
   end;
 end;
 
+{ the WM_STATE a previous window manager left on a window, -1 if there is none }
+function TWM.WmStateOf(Win: TWindow): Integer;
+var
+  D: PByte;
+  N: culong;
+begin
+  Result := -1;
+  D := GetProp(Win, aWmState, aWmState, N);
+  if D = nil then Exit;
+  if N >= 1 then Result := Integer(PCULong(D)[0]);
+  XFree(D);
+end;
+
 { A modal dialog blocks the window it is transient for: that window cannot be focused while the
   dialog is up (focus goes to the dialog), and clicks on it are swallowed. }
 function TWM.ModalBlocker(C: TClient): TClient;
@@ -962,10 +976,12 @@ begin
   if C.MinW < 1 then C.MinW := 1;
   if C.MinH < 1 then C.MinH := 1;
   C.InputHint := True;
+  C.StartIconic := False;
   Wm := XGetWMHints(FDpy, C.Win);
   if Wm <> nil then
   begin
     if (Wm^.flags and InputHint) <> 0 then C.InputHint := Wm^.input <> 0;
+    if ((Wm^.flags and StateHint) <> 0) and (Wm^.initial_state = IconicState) then C.StartIconic := True;
     XFree(Wm);
   end;
   C.Transient := 0;
@@ -1212,6 +1228,8 @@ begin
   C.Name := ReadName(Win);
   ReadHints(C);
   ReadClass(C);
+  { adopting a window a previous WM had minimized, or an app that asks to start minimized }
+  if Startup then C.StartIconic := (Atr.map_state = IsUnmapped) and (WmStateOf(Win) = IconicState);
   ReadStates(C, StickyInit);
   ReadIcon(C);
   C.Decorated := WantsDecorations(Win);
@@ -1261,17 +1279,25 @@ begin
   FClients.Add(C);
   FMru.Add(C);
   Repaint(C, True);
-  XMapWindow(FDpy, Win);
-  if OnDesk(C) then XMapWindow(FDpy, C.Frame);
-  SetWmState(C, NormalState);
+  if C.StartIconic then
+  begin
+    C.Iconic := True;                { stays unmapped until the user restores it }
+    SetWmState(C, IconicState);
+  end
+  else
+  begin
+    XMapWindow(FDpy, Win);
+    if OnDesk(C) then XMapWindow(FDpy, C.Frame);
+    SetWmState(C, NormalState);
+  end;
   SetDesktopProp(C);
   UpdateNetState(C);
   SetCards(Win, aFrameExtents, [culong(E.L), culong(E.R), culong(E.T), culong(E.B)]);
   SendConfigure(C);
   UpdateClientList;
-  Log(Format('managed 0x%x "%s" frame 0x%x at %d,%d %dx%d%s', [Win, C.Name, C.Frame, C.X, C.Y, C.W, C.H,
-    IfThen(C.Decorated, '', ' (no decorations)')]));
-  if (not Startup) and OnDesk(C) then FocusClient(C, CurrentTime);
+  Log(Format('managed 0x%x "%s" frame 0x%x at %d,%d %dx%d%s%s', [Win, C.Name, C.Frame, C.X, C.Y, C.W, C.H,
+    IfThen(C.Decorated, '', ' (no decorations)'), IfThen(C.StartIconic, ' (minimized)', '')]));
+  if (not Startup) and OnDesk(C) and (not C.StartIconic) then FocusClient(C, CurrentTime);
   if C.Above or C.Below then Restack;
 end;
 
@@ -1333,7 +1359,8 @@ begin
     begin
       for I := 0 to Integer(N) - 1 do
         if (XGetWindowAttributes(FDpy, Kids[I], @Atr) <> 0) and (Atr.override_redirect = 0) and
-           (Atr.map_state = IsViewable) then
+           ((Atr.map_state = IsViewable) or
+            ((Atr.map_state = IsUnmapped) and (WmStateOf(Kids[I]) = IconicState) and (Kids[I] <> FCheckWin))) then
           Manage(Kids[I], True);
       if Kids <> nil then XFree(Kids);
     end;

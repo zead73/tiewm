@@ -900,6 +900,36 @@ newwin s2 -t "Starts above and sticky" -w 300 -h 200 -c 888888 -s 60 -p 400,300 
 xprop -id "$S2" _NET_WM_STATE | grep -q ABOVE && [ "$(deskof "$S2")" = "4294967295" ]; check "an app that starts above and on all desktops is honoured" $?
 stop_clients
 
+echo "== 33. minimized windows: apps that start minimized, and windows a previous WM left minimized"
+stop_wm; stop_clients
+export TIEWM_CONFIG="$TMP/none.conf"; start_wm
+newwin sm -t "Starts minimized" -w 300 -h 200 -c 7755aa -s 300 -p 400,300 -W iconic; SM=$LAST_ID
+sec 0.5
+[ "$(viewable "$SM")" = "0" ] && [ "$(wmstate "$SM")" = "Iconic" ]; check "WM_HINTS initial_state = iconic: the window starts hidden with WM_STATE Iconic" $?
+xprop -id "$SM" _NET_WM_STATE | grep -q HIDDEN; check "and _NET_WM_STATE_HIDDEN is set" $?
+wmctrl -l | grep -q "Starts minimized"; check "it is still in the client list (a taskbar can restore it)" $?
+[ "$(hexnorm "$(active)" 2>/dev/null)" != "$(hexnorm "$SM")" ]; check "it did not steal the focus" $?
+wmctrl -i -a "$SM"; sec 0.8
+[ "$(viewable "$SM")" = "1" ] && [ "$(wmstate "$SM")" = "Normal" ] && [ "$(hexnorm "$(active)")" = "$(hexnorm "$SM")" ]; check "restoring it through _NET_ACTIVE_WINDOW shows and focuses it" $?
+G=$(absgeom "$SM"); [ "$(field "$G" x)" -eq 400 ] && [ "$(field "$G" y)" -eq 300 ]; check "at the position it asked for ($G)" $?
+stop_clients
+newwin nm -t "Normal start" -w 300 -h 200 -c 5577aa -s 300 -p 400,300
+[ "$(viewable "$LAST_ID")" = "1" ]; check "a normal window is unaffected" $?
+stop_wm; stop_clients
+newwin pi -t "Left minimized" -w 300 -h 200 -c aa7755 -s 300 -p 300,200 -U iconic; PI=$LAST_ID
+newwin pw -t "Left withdrawn" -w 300 -h 200 -c 55aa77 -s 300 -p 600,200 -U withdrawn; PW=$LAST_ID
+newwin pn -t "Left mapped" -w 300 -h 200 -c 77aa55 -s 300 -p 300,500; PN=$LAST_ID
+start_wm; sec 0.6
+wmctrl -l | grep -q "Left minimized"; check "a window a previous WM had minimized (unmapped, WM_STATE Iconic) is adopted at startup" $?
+[ "$(viewable "$PI")" = "0" ] && [ "$(wmstate "$PI")" = "Iconic" ]; check "and stays minimized" $?
+! wmctrl -l | grep -q "Left withdrawn"; check "an unmapped window that is merely withdrawn is not adopted" $?
+wmctrl -l | grep -q "Left mapped" && [ "$(viewable "$PN")" = "1" ]; check "mapped windows are adopted as before" $?
+wmctrl -i -a "$PI"; sec 0.8
+[ "$(viewable "$PI")" = "1" ] && [ "$(wmstate "$PI")" = "Normal" ]; check "the adopted minimized window can be restored" $?
+G=$(absgeom "$PI"); [ "$(field "$G" x)" -eq 300 ] && [ "$(field "$G" y)" -eq 200 ]; check "where it was ($G)" $?
+grep -q '(minimized)' "$TMP/tiewm.log"; check "the log notes minimized windows" $?
+stop_clients
+
 stop_wm
 
 echo

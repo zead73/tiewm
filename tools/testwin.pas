@@ -5,6 +5,8 @@ program testwin;
     testwin [-t title] [-w width] [-h height] [-c rrggbb] [-s seconds]
             [-m minw,minh] [-p x,y]   program-specified position (USPosition)
             [-T newtitle,afterseconds]  change the title later
+            [-W iconic]               WM_HINTS initial_state = iconic (an app that starts minimized)
+            [-U iconic|withdrawn]     never map: leave an unmapped window with that WM_STATE, as a previous WM would
             [-S state[,state...]]     initial _NET_WM_STATE: modal skip_taskbar skip_pager above below sticky demands_attention
             [-I rrggbb[:size][,rrggbb[:size]...]]  set _NET_WM_ICON (solid squares)
             [-J rrggbb,seconds]       replace the icon later (32x32)
@@ -33,7 +35,10 @@ var
   WinType: string;
   MotifMode, MotifLater: string;
   ClassInst, ClassName: string;
-  IconSpec, IconLater, StateSpec: string;
+  IconSpec, IconLater, StateSpec, HintState, UnmappedMode: string;
+  WmHints: TXWMHints;
+  WmStateProp: array[0..1] of culong;
+  AWmState: TAtom;
   IconAfter: Integer;
   IconChanged: Boolean;
   CHint: TXClassHint;
@@ -137,7 +142,7 @@ begin
   IconifyAfter := -1; ParentId := 0; Iconified := False; WinType := '';
   MotifMode := ''; MotifLater := ''; MotifAfter := 0; MotifChanged := False;
   ClassInst := ''; ClassName := '';
-  StateSpec := ''; IconSpec := ''; IconLater := ''; IconAfter := 0; IconChanged := False;
+  StateSpec := ''; HintState := ''; UnmappedMode := ''; IconSpec := ''; IconLater := ''; IconAfter := 0; IconChanged := False;
   I := 1;
   while I <= ParamCount do
   begin
@@ -163,6 +168,8 @@ begin
       else if Opt = '-y' then WinType := S
       else if Opt = '-D' then MotifMode := S
       else if Opt = '-S' then StateSpec := S
+      else if Opt = '-W' then HintState := S
+      else if Opt = '-U' then UnmappedMode := S
       else if Opt = '-I' then IconSpec := S
       else if Opt = '-J' then
       begin
@@ -225,8 +232,22 @@ begin
       XChangeProperty(Dpy, Win, AState, XA_ATOM, 32, PropModeReplace, PByte(@ABelow), 1);
     end;
   end;
+  if HintState = 'iconic' then
+  begin
+    FillChar(WmHints, SizeOf(WmHints), 0);
+    WmHints.flags := StateHint;
+    WmHints.initial_state := IconicState;
+    XSetWMHints(Dpy, Win, @WmHints);
+  end;
   XSelectInput(Dpy, Win, StructureNotifyMask or ButtonPressMask or FocusChangeMask or ExposureMask or KeyPressMask);
-  XMapWindow(Dpy, Win);
+  if UnmappedMode = '' then XMapWindow(Dpy, Win)
+  else
+  begin
+    if UnmappedMode = 'iconic' then WmStateProp[0] := IconicState else WmStateProp[0] := WithdrawnState;
+    WmStateProp[1] := 0;
+    AWmState := XInternAtom(Dpy, 'WM_STATE', 0);
+    XChangeProperty(Dpy, Win, AWmState, AWmState, 32, PropModeReplace, PByte(@WmStateProp[0]), 2);
+  end;
   XFlush(Dpy);
   Say(Format('mapped id=0x%x', [Win]));
   T0 := FpTime;

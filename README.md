@@ -33,7 +33,7 @@ Run it ONLY on a display you mean to manage: `DISPLAY=:99 ./tiewm` (it refuses t
 the root; `TIEWM_THEME`, `TIEWM_FONT`, `TIEWM_DEBUG=1` are the only settings so far). SIGTERM/SIGINT hand all
 windows back to the root cleanly.
 
-Works (252 scenario checks, `tools/wmtest.sh`, scratch Xvfb on :99 only): manage/adopt/unmanage, centred
+Works (266 scenario checks, `tools/wmtest.sh`, scratch Xvfb on :99 only): manage/adopt/unmanage, centred
 placement (honours USPosition), themed frames with shape, click-to-focus with click replay to the app,
 raise on click, active/inactive repaint, title updates, titlebar drag and Alt+drag (also with Num/Caps Lock),
 Alt+right-drag resize, edge/corner resize with min-size and size-increment hints, close button
@@ -62,6 +62,11 @@ appears/disappears, the client stays where it is). Undecorated windows still mov
 Alt+right-drag or Alt+F8, maximize/fullscreen/close/menu (Alt+space) as usual; Shade is disabled for them.
 The window menu's "No titlebar" entry (Alt+space opens it on an undecorated window) turns the frame off or on for any
 window by hand; the client never moves, and a titlebar that would land above the work area pushes the window down.
+
+Minimized windows: an app that asks to start minimized (`WM_HINTS` initial_state = iconic) is managed but left hidden
+(WM_STATE Iconic, `_NET_WM_STATE_HIDDEN`, in the client list, no focus stolen) until it is restored from a taskbar, Alt+Tab
+or by the app; and at startup tiewm adopts unmapped windows a previous window manager left minimized (WM_STATE Iconic),
+keeping them minimized. Unmapped windows that are merely withdrawn are not adopted.
 
 Modal dialogs: a transient window with `_NET_WM_STATE_MODAL` (set at map time or by client message) blocks the window it
 is transient for: focusing that window (click on its client area or titlebar, taskbar/`_NET_ACTIVE_WINDOW`, Alt+Tab,
@@ -157,8 +162,7 @@ unless every window has `_NET_WM_DESKTOP`.
      optional `undecorated_border = N` config setting adds a thin N-pixel resize border (drag an edge or corner).
 
 Deliberately not done: other key bindings, `--replace`,
-multi-monitor, adopting windows that are
-iconic when the WM starts, session
+multi-monitor, session
 management, gravity/transient-for handling, `_NET_WM_MOVERESIZE`. Not yet run against the real LXQt
 session or lxqt-panel.
 
