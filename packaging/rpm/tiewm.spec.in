@@ -15,6 +15,7 @@ Recommends:     xfwm4
 Suggests:       picom
 # Free Pascal produces no debug information rpm can split off
 %global debug_package %{nil}
+%global _build_id_links none
 
 %description
 tiewm is a floating window manager written in Free Pascal. It draws the pixmap

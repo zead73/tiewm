@@ -10,8 +10,7 @@ scratch X server, and all seven installed xfwm4 themes match real xfwm4 pixel fo
 - [Features](#features)
 - [Default keys and mouse](#default-keys-and-mouse)
 - [Configuration](#configuration)
-- [Building and running](#building-and-running)
-- [Debian and Ubuntu](#debian-and-ubuntu)
+- [Building and running](#building-and-running) (and the [packages](#packages-debian--ubuntu-fedora--rhel-arch))
 - [Testing](#testing)
 - [Source layout](#source-layout)
 - [How the theme engine works](#how-the-theme-engine-works)
@@ -161,19 +160,25 @@ manage**: it refuses to start while another window manager owns the root.
 To use it as your window manager, point the session at the binary (for LXQt, the window manager setting in the session
 options, with `tiewm` in the PATH).
 
-### Debian and Ubuntu
+### Packages (Debian / Ubuntu, Fedora / RHEL, Arch)
 
-A `.deb` is built by `packaging/docker-deb.sh` (in a Debian container; needs docker) or `packaging/build-deb.sh` (on a Debian
-system with `fpc libx11-dev libxft-dev libxext-dev libxrandr-dev libxtst-dev dpkg-dev` installed). The result is
-`dist/tiewm_<version>_<arch>.deb`. Built on Debian 12 (bookworm), it runs on 12 and newer.
+Each release has a package for the three families. They are built by scripts in `packaging/`; the built files land in `dist/`.
+All three install `/usr/bin/tiewm`, the docs and `tiewm.conf.example`, and a **tiewm** entry in the login screen's session list.
+tiewm draws the xfwm4 themes, which the distributions ship in their `xfwm4` package (a recommended / optional dependency in each
+package): install it, or put a theme in `~/.themes`, or tiewm refuses to start with a message saying so. To use tiewm under LXQt,
+set the window manager in Session Settings to `tiewm` (and `picom` for shadows and transparency).
 
-    sudo apt install ./tiewm_0.5_amd64.deb      # pulls in libx11, libxft, libxext, libxrandr and, as a recommendation, xfwm4
+| Family | Install | Build it yourself |
+|---|---|---|
+| Debian 12+ / Ubuntu (amd64) | `sudo apt install ./tiewm_0.5_amd64.deb` | `packaging/docker-deb.sh` (in a container) or `packaging/build-deb.sh` on Debian |
+| Fedora, RHEL / Alma / Rocky 9+ (x86_64) | `sudo dnf install ./tiewm-0.5-1.el9.x86_64.rpm` | `packaging/rpm/docker-rpm.sh` (AlmaLinux 9 container; pass `fedora:latest` to build there) |
+| Arch Linux (x86_64) | `sudo pacman -U tiewm-0.5-1-x86_64.pkg.tar.zst` | `packaging/arch/build.sh` (on Arch, needs `fpc`) |
 
-tiewm draws the xfwm4 themes, which Debian ships in the `xfwm4` package (it is only *recommended*: install it, or put a theme in
-`~/.themes`, or tiewm refuses to start with a message saying so). The package puts the binary in `/usr/bin/tiewm`, the docs and
-`tiewm.conf.example` in `/usr/share/doc/tiewm/`, and a **tiewm** entry in the login screen's session list. To use it under LXQt
-instead, set the window manager in Session Settings to `tiewm` (and `picom` if you want shadows and transparency). Without the
-package, `./build.sh` works the same way on Debian after installing the dev packages above.
+The Debian package is built on Debian 12 and the RPM on AlmaLinux 9, so they run on those releases and anything newer. Without a
+package, `./build.sh main` builds just the window manager (`./build.sh` also builds the test tools). Build requirements: FPC 3.2.2
+and the dev packages for Xlib, Xft, Xext and Xrandr (Xtst for the tools): on Debian `fpc libx11-dev libxft-dev libxext-dev
+libxrandr-dev libxtst-dev`, on Fedora / Alma (EPEL and CRB for fpc) `fpc glibc-devel libX11-devel libXft-devel libXext-devel
+libXrandr-devel`, on Arch `fpc`.
 
 ## Testing
 
