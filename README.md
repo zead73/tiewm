@@ -33,7 +33,7 @@ Run it ONLY on a display you mean to manage: `DISPLAY=:99 ./tiewm` (it refuses t
 the root; `TIEWM_THEME`, `TIEWM_FONT`, `TIEWM_DEBUG=1` are the only settings so far). SIGTERM/SIGINT hand all
 windows back to the root cleanly.
 
-Works (307 scenario checks, `tools/wmtest.sh`, scratch Xvfb on :99 only): manage/adopt/unmanage, centred
+Works (317 scenario checks, `tools/wmtest.sh`, scratch Xvfb on :99 only): manage/adopt/unmanage, centred
 placement (honours USPosition), themed frames with shape, click-to-focus with click replay to the app,
 raise on click, active/inactive repaint, title updates, titlebar drag and Alt+drag (also with Num/Caps Lock),
 Alt+right-drag resize, edge/corner resize with min-size and size-increment hints, close button
@@ -162,6 +162,12 @@ maximized windows refit, and a window left off every monitor is pulled onto the 
 changes; because servers send none for client-defined monitors (`xrandr --setmonitor`), the main loop also polls the list every 2 s.
 The test uses virtual monitors in a second Xvfb (`tools/monset.pas` defines them). Still single-screen in spirit: no per-monitor
 `_NET_WORKAREA` (it is the box around all of them), no "move to next monitor" key, no `_NET_WM_FULLSCREEN_MONITORS`.
+
+The last partly done items: aspect-ratio hints (`WM_NORMAL_HINTS` min/max aspect, applied with the size limits and increments),
+the `WM_HINTS` urgency bit (shown as `_NET_WM_STATE_DEMANDS_ATTENTION` for the panel, cleared when the window gets the focus),
+Alt+F12 (`above`: always on top), and an Alt+Tab list: while Alt is held a list of the windows in cycling order is drawn over the
+middle of the monitor the pointer is on (selected row highlighted, minimized windows dimmed and marked, titles ellipsized); it uses
+the menu font and the palette. No thumbnails.
 
 Careful when testing: the live session runs a process called `tiewm` too, so test scripts must never `pkill` by name
 (`wmtest.sh` only signals a tiewm whose DISPLAY is :99).

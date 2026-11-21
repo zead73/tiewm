@@ -91,6 +91,8 @@
 # 10 px (Shift: 1 px), Return confirms, Escape cancels.
 #move_window = Alt+F7
 #resize_window = Alt+F8
+# above: toggle always-on-top for the focused window (also in the window menu)
+#above = Alt+F12
 #
 # Direct desktop keys (none by default; Ctrl+F1..F12 are already taken by lxqt-globalkeyshortcuts):
 #goto_desktop_1 = Super+1

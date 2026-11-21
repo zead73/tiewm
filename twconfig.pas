@@ -27,7 +27,7 @@ uses
 
 type
   TKeyAction = (kaClose, kaCycle, kaCycleBack, kaMaximize, kaIconify, kaFullscreen,
-    kaDeskLeft, kaDeskRight, kaMoveLeft, kaMoveRight, kaWindowMenu, kaShade, kaMoveWindow, kaResizeWindow, kaGotoDesk, kaMoveToDesk);
+    kaDeskLeft, kaDeskRight, kaMoveLeft, kaMoveRight, kaWindowMenu, kaShade, kaMoveWindow, kaResizeWindow, kaGotoDesk, kaMoveToDesk, kaAbove);
 
   TKeyBinding = record
     Sym: TKeySym;
@@ -86,7 +86,7 @@ implementation
 const
   ActionNames: array[TKeyAction] of string = ('close', 'cycle', 'cycle_back', 'maximize',
     'iconify', 'fullscreen', 'desktop_left', 'desktop_right', 'move_left', 'move_right',
-    'window_menu', 'shade', 'move_window', 'resize_window', 'goto_desktop_', 'move_to_desktop_');
+    'window_menu', 'shade', 'move_window', 'resize_window', 'goto_desktop_', 'move_to_desktop_', 'above');
 
 procedure Warn(var C: TConfig; const Msg: string);
 begin
@@ -158,6 +158,7 @@ begin
   AddBinding(Result, kaWindowMenu, 0, 'Alt+space');
   AddBinding(Result, kaMoveWindow, 0, 'Alt+F7');
   AddBinding(Result, kaResizeWindow, 0, 'Alt+F8');
+  AddBinding(Result, kaAbove, 0, 'Alt+F12');
 end;
 
 

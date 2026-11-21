@@ -25,6 +25,8 @@ type
     PingSent: culong;             { server time of the last _NET_WM_PING we sent, 0 = answered or none }
     PingTick: Int64;              { our own clock (ms) when it was sent }
     MinW, MinH, MaxW, MaxH, IncW, IncH, BaseW, BaseH: Integer;   { client sizes }
+    MinAspX, MinAspY, MaxAspX, MaxAspY: Integer;                  { aspect-ratio limits (width:height), 0 = none }
+    UrgentHint: Boolean;          { WM_HINTS urgency bit is set }
     Gravity: Integer;             { ICCCM win_gravity: 1 NorthWest (default) .. 9 SouthEast, 10 Static }
     Maximized, Fullscreen, Iconic, Above, Below, Shaded, Modal, StartIconic: Boolean;
     Extra: array of TAtom;        { other _NET_WM_STATE atoms the app set (skip_taskbar...): kept as they are }
@@ -111,6 +113,7 @@ type
     FCycling: Boolean;
     FCycleList: TList;
     FCycleIdx: Integer;
+    FCycleWin: TWindow;      { the Alt+Tab list while cycling, 0 = not shown }
     FPressClient: TClient;
     FPressLetter: Char;
     FLastClickTime: culong;
@@ -207,6 +210,8 @@ type
     procedure StartCycle(Dir: Integer; ATime: culong; Mods: cuint);
     procedure StepCycle(Dir: Integer);
     procedure EndCycle;
+    procedure DrawCycleList;
+    procedure HideCycleList;
     procedure UpdateClientList;
     procedure SetWmState(C: TClient; State: Integer);
     procedure UpdateNetState(C: TClient);
@@ -1131,15 +1136,23 @@ var
   Prots: PAtom;
   NProt, I: cint;
   TWin: TWindow;
+  Urg: Boolean;
 begin
+  Urg := False;
   C.MinW := 1; C.MinH := 1; C.MaxW := 65535; C.MaxH := 65535;
   C.IncW := 1; C.IncH := 1; C.BaseW := 0; C.BaseH := 0;
   C.Gravity := 1;
+  C.MinAspX := 0; C.MinAspY := 0; C.MaxAspX := 0; C.MaxAspY := 0;
   FillChar(Sz, SizeOf(Sz), 0);
   if XGetWMNormalHints(FDpy, C.Win, @Sz, @Supplied) <> 0 then
   begin
     if ((Sz.flags and PWinGravity) <> 0) and (Sz.win_gravity >= 1) and (Sz.win_gravity <= 10) then
       C.Gravity := Sz.win_gravity;
+    if (Sz.flags and PAspect) <> 0 then
+    begin
+      C.MinAspX := Sz.min_aspect.x; C.MinAspY := Sz.min_aspect.y;
+      C.MaxAspX := Sz.max_aspect.x; C.MaxAspY := Sz.max_aspect.y;
+    end;
     if (Sz.flags and PMinSize) <> 0 then begin C.MinW := Sz.min_width; C.MinH := Sz.min_height; end;
     if (Sz.flags and PMaxSize) <> 0 then begin C.MaxW := Sz.max_width; C.MaxH := Sz.max_height; end;
     if (Sz.flags and PResizeInc) <> 0 then begin C.IncW := Sz.width_inc; C.IncH := Sz.height_inc; end;
@@ -1157,7 +1170,15 @@ begin
   begin
     if (Wm^.flags and InputHint) <> 0 then C.InputHint := Wm^.input <> 0;
     if ((Wm^.flags and StateHint) <> 0) and (Wm^.initial_state = IconicState) then C.StartIconic := True;
+    Urg := (Wm^.flags and XUrgencyHint) <> 0;
     XFree(Wm);
+  end;
+  { the urgency bit is shown to the panel as _NET_WM_STATE_DEMANDS_ATTENTION }
+  if Urg <> C.UrgentHint then
+  begin
+    C.UrgentHint := Urg;
+    ExtraSet(C, aDemandsAttn, Urg);
+    if C.Frame <> 0 then UpdateNetState(C);
   end;
   C.Transient := 0;
   TWin := 0;
@@ -1228,6 +1249,11 @@ begin
   if CH < C.MinH then CH := C.MinH;
   if CW > C.MaxW then CW := C.MaxW;
   if CH > C.MaxH then CH := C.MaxH;
+  { aspect ratio (width : height): shrink whichever side is too long }
+  if (C.MaxAspX > 0) and (C.MaxAspY > 0) and (CH > 0) and (CW * C.MaxAspY > CH * C.MaxAspX) then
+    CW := CH * C.MaxAspX div C.MaxAspY;
+  if (C.MinAspX > 0) and (C.MinAspY > 0) and (CW * C.MinAspY < CH * C.MinAspX) then
+    CH := CW * C.MinAspY div C.MinAspX;
   if C.IncW > 1 then CW := C.BaseW + ((CW - C.BaseW) div C.IncW) * C.IncW;
   if C.IncH > 1 then CH := C.BaseH + ((CH - C.BaseH) div C.IncH) * C.IncH;
   if CW < C.MinW then CW := C.MinW;
@@ -1604,6 +1630,11 @@ begin
     Ev.xclient.data.l[0] := clong(aTakeFocus);
     Ev.xclient.data.l[1] := clong(ATime);
     XSendEvent(FDpy, C.Win, 0, NoEventMask, @Ev);
+  end;
+  if ExtraHas(C, aDemandsAttn) then        { looking at it satisfies the request }
+  begin
+    ExtraSet(C, aDemandsAttn, False);
+    UpdateNetState(C);
   end;
   SetWins(FRoot, aActive, [C.Win]);
   if (Old <> nil) and (Old <> C) then Repaint(Old, False);
@@ -2226,6 +2257,7 @@ begin
     kaResizeWindow: StartKb(kmResize, ATime);
     kaGotoDesk: SwitchDesktop(B.Arg - 1, ATime);
     kaMoveToDesk: MoveFocusedTo(B.Arg - 1, ATime);
+    kaAbove: if FFocused <> nil then SetAbove(FFocused, not FFocused.Above);
   end;
 end;
 
@@ -2266,10 +2298,97 @@ begin
   if N < 2 then Exit;
   FCycleIdx := ((FCycleIdx + Dir) mod N + N) mod N;
   Activate(TClient(FCycleList[FCycleIdx]), CurrentTime);
+  if FCycling then DrawCycleList;
+end;
+
+{ The Alt+Tab list: one row per window in cycling order, the selected one highlighted
+  (xfwm4's "list" tab window). An override-redirect window drawn in one pixmap. }
+procedure TWM.DrawCycleList;
+const
+  Pad = 12;
+  MaxRows = 16;
+var
+  I, First, Rows, RowH, W, H, TW, MaxTW, X, Y, Mn, AX, AY, AW, AH: Integer;
+  C: TClient;
+  Pm: TPixmap;
+  GC: TGC;
+  Pal: TThemePalette;
+  Attr: TXSetWindowAttributes;
+  Txt: string;
+  Col: LongWord;
+begin
+  Pal := FCfg.Palette;
+  Rows := FCycleList.Count;
+  if Rows > MaxRows then Rows := MaxRows;
+  First := FCycleIdx - Rows + 1;       { keep the selected row inside the visible part }
+  if First < 0 then First := 0;
+  RowH := FMenuFont.Ascent + FMenuFont.Descent + 10;
+  Mn := PointerMonitor;
+  WorkAreaOf(Mn, AX, AY, AW, AH);
+  MaxTW := AW * 6 div 10 - 2 * Pad;
+  TW := 160;
+  for I := First to First + Rows - 1 do
+  begin
+    C := TClient(FCycleList[I]);
+    Txt := C.Name;
+    if C.Iconic then Txt := Txt + '  (minimized)';
+    if FMenuFont.Width(Txt) > TW then TW := FMenuFont.Width(Txt);
+  end;
+  if TW > MaxTW then TW := MaxTW;
+  W := TW + 2 * Pad + 2;
+  H := Rows * RowH + 2;
+  X := AX + (AW - W) div 2;
+  Y := AY + (AH - H) div 2;
+  if FCycleWin = 0 then
+  begin
+    FCycleWin := XCreateSimpleWindow(FDpy, FRoot, X, Y, W, H, 0, 0, 0);
+    Attr.override_redirect := 1;
+    XChangeWindowAttributes(FDpy, FCycleWin, CWOverrideRedirect, @Attr);
+  end
+  else
+    XMoveResizeWindow(FDpy, FCycleWin, X, Y, W, H);
+  Pm := XCreatePixmap(FDpy, FRoot, W, H, DefaultDepth(FDpy, FScr));
+  GC := XCreateGC(FDpy, Pm, 0, nil);
+  XSetForeground(FDpy, GC, Pal.Color1[wsActive] and $FFFFFF);            { 1 px border }
+  XFillRectangle(FDpy, Pm, GC, 0, 0, W, H);
+  XSetForeground(FDpy, GC, Pal.Color2[wsActive] and $FFFFFF);
+  XFillRectangle(FDpy, Pm, GC, 1, 1, W - 2, H - 2);
+  for I := 0 to Rows - 1 do
+  begin
+    C := TClient(FCycleList[First + I]);
+    if First + I = FCycleIdx then
+    begin
+      XSetForeground(FDpy, GC, Pal.Color1[wsActive] and $FFFFFF);
+      XFillRectangle(FDpy, Pm, GC, 1, 1 + I * RowH, W - 2, RowH);
+      Col := Pal.TextColor[wsActive] and $FFFFFF;
+    end
+    else if C.Iconic then Col := Pal.TextColor[wsInactive] and $FFFFFF
+    else Col := Pal.Text2Color[wsActive] and $FFFFFF;
+    Txt := C.Name;
+    if C.Iconic then Txt := Txt + '  (minimized)';
+    Txt := FMenuFont.Fit(Txt, TW);
+    FMenuFont.Draw(Pm, DefaultVisual(FDpy, FScr), DefaultColormap(FDpy, FScr), 1 + Pad,
+      1 + I * RowH + 5 + FMenuFont.Ascent, Txt, Col, smNone, 0);
+  end;
+  XFreeGC(FDpy, GC);
+  XSetWindowBackgroundPixmap(FDpy, FCycleWin, Pm);
+  XFreePixmap(FDpy, Pm);
+  XMapRaised(FDpy, FCycleWin);
+  XClearWindow(FDpy, FCycleWin);
+end;
+
+procedure TWM.HideCycleList;
+begin
+  if FCycleWin <> 0 then
+  begin
+    XDestroyWindow(FDpy, FCycleWin);
+    FCycleWin := 0;
+  end;
 end;
 
 procedure TWM.EndCycle;
 begin
+  HideCycleList;
   if FCycling then XUngrabKeyboard(FDpy, CurrentTime);
   FCycling := False;
   FCycleList.Clear;

@@ -17,6 +17,8 @@ program testwin;
             [-P 0xID]                 mark as transient for that window
             [-i seconds]              iconify itself (XIconifyWindow) after N seconds
             [-G n]                    win_gravity 1-10 (with -p; default Static=10, 0 = leave unset = NorthWest)
+            [-Q seconds]              set the WM_HINTS urgency bit after N seconds
+            [-a minx:miny,maxx:maxy]  aspect-ratio hints (width:height)
             [-H]                      hung app: ignores WM_DELETE_WINDOW and never answers _NET_WM_PING
             [-X]                      before mapping, send _NET_REQUEST_FRAME_EXTENTS and report the reply
             [-R dir]                  on a button press send _NET_WM_MOVERESIZE with that direction (0-11)
@@ -42,6 +44,9 @@ var
   IconSpec, IconLater, StateSpec, HintState, UnmappedMode: string;
   MoveResizeDir, Gravity: Integer;
   AskExtents, Hang: Boolean;
+  UrgentAfter: Integer;
+  UrgentDone: Boolean;
+  AspSpec: string;
   WmPing: TAtom;
   Prots: array[0..1] of TAtom;
   ExtTry, ExtFmt: Integer;
@@ -154,7 +159,7 @@ begin
   MotifMode := ''; MotifLater := ''; MotifAfter := 0; MotifChanged := False;
   ClassInst := ''; ClassName := '';
   StateSpec := ''; HintState := ''; UnmappedMode := ''; IconSpec := ''; IconLater := ''; IconAfter := 0; IconChanged := False;
-  MoveResizeDir := -1; Gravity := 10; AskExtents := False; Hang := False;
+  MoveResizeDir := -1; Gravity := 10; AskExtents := False; Hang := False; UrgentAfter := -1; UrgentDone := False; AspSpec := '';
   I := 1;
   while I <= ParamCount do
   begin
@@ -186,6 +191,8 @@ begin
       else if Opt = '-U' then UnmappedMode := S
       else if Opt = '-R' then MoveResizeDir := StrToInt(S)
       else if Opt = '-G' then Gravity := StrToInt(S)
+      else if Opt = '-Q' then UrgentAfter := StrToInt(S)
+      else if Opt = '-a' then AspSpec := S
       else if Opt = '-I' then IconSpec := S
       else if Opt = '-J' then
       begin
@@ -215,7 +222,15 @@ begin
   Win := XCreateSimpleWindow(Dpy, DefaultRootWindow(Dpy), 0, 0, W, H, 0, 0, Col);
   XStoreName(Dpy, Win, PChar(Title));
   FillChar(Hints, SizeOf(Hints), 0);
-  if (MinW > 0) or HavePos then
+  if (AspSpec <> '') then
+  begin
+    Hints.flags := Hints.flags or PAspect;
+    Hints.min_aspect.x := StrToInt(Copy(AspSpec, 1, Pos(':', AspSpec) - 1));
+    Hints.min_aspect.y := StrToInt(Copy(AspSpec, Pos(':', AspSpec) + 1, Pos(',', AspSpec) - Pos(':', AspSpec) - 1));
+    Hints.max_aspect.x := StrToInt(Copy(Copy(AspSpec, Pos(',', AspSpec) + 1, 99), 1, Pos(':', Copy(AspSpec, Pos(',', AspSpec) + 1, 99)) - 1));
+    Hints.max_aspect.y := StrToInt(Copy(Copy(AspSpec, Pos(',', AspSpec) + 1, 99), Pos(':', Copy(AspSpec, Pos(',', AspSpec) + 1, 99)) + 1, 99));
+  end;
+  if (MinW > 0) or HavePos or (AspSpec <> '') then
   begin
     if MinW > 0 then begin Hints.flags := Hints.flags or PMinSize; Hints.min_width := MinW; Hints.min_height := MinH; end;
     if HavePos then begin Hints.flags := Hints.flags or USPosition; Hints.x := PosX; Hints.y := PosY; end;
@@ -305,6 +320,15 @@ begin
       XFlush(Dpy);
       Changed := True;
       Say('title changed to ' + NewTitle);
+    end;
+    if (UrgentAfter >= 0) and (not UrgentDone) and (Now_ - T0 >= UrgentAfter) then
+    begin
+      FillChar(WmHints, SizeOf(WmHints), 0);
+      WmHints.flags := XUrgencyHint;
+      XSetWMHints(Dpy, Win, @WmHints);
+      XFlush(Dpy);
+      UrgentDone := True;
+      Say('urgency set');
     end;
     if (IconLater <> '') and (not IconChanged) and (Now_ - T0 >= IconAfter) then
     begin

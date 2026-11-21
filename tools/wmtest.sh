@@ -1085,6 +1085,47 @@ kill "$MONPID" 2>/dev/null; wait "$MONPID" 2>/dev/null
 kill "$XV97" 2>/dev/null; wait "$XV97" 2>/dev/null
 export DISPLAY=:99
 
+echo "== 40. urgency hint, aspect-ratio hints, Alt+F12"
+stop_wm; stop_clients
+export TIEWM_CONFIG="$TMP/none.conf"; start_wm
+newwin ua -t "Urgent later" -w 300 -h 200 -c cc9955 -s 120 -p 100,100 -Q 3; UA=$LAST_ID
+newwin ub -t "Has focus" -w 300 -h 200 -c 55cc99 -s 120 -p 600,100; UB=$LAST_ID
+sleep 3.5
+xprop -id "$UA" _NET_WM_STATE | grep -q DEMANDS_ATTENTION; check "the WM_HINTS urgency bit shows up as _NET_WM_STATE_DEMANDS_ATTENTION" $?
+wmctrl -i -a "$UA"; sec 0.6
+! xprop -id "$UA" _NET_WM_STATE | grep -q DEMANDS_ATTENTION; check "focusing the window clears it" $?
+stop_clients
+newwin as -t "Aspect max 2:1" -w 300 -h 200 -c 9955cc -s 120 -p 400,300 -a 1:3,2:1; AS=$LAST_ID
+G=$(absgeom "$AS"); RX=$(field "$G" x); RY=$(field "$G" y); RW=$(field "$G" w); RH=$(field "$G" h)
+"$XDO" move $((RX+RW+M-2)) $((RY+RH+M-2)) down 1 sleep 300 move $((RX+RW+M-2+300)) $((RY+RH+M-2)) sleep 300 up 1; sec 0.6
+G=$(absgeom "$AS"); [ "$(field "$G" w)" -le $((2*$(field "$G" h))) ] && [ "$(field "$G" w)" -gt 300 ]; RC=$?; check "widening a window with max aspect 2:1 stops at twice its height ($G)" $RC
+stop_clients
+newwin af -t "Alt F12" -w 300 -h 200 -c 99cc55 -s 120 -p 400,300; AF=$LAST_ID
+"$XDO" move 500 400 click 1; sec 0.4
+"$XDO" keydown Alt_L key F12 keyup Alt_L; sec 0.5
+xprop -id "$AF" _NET_WM_STATE | grep -q ABOVE; check "Alt+F12 puts the focused window always on top" $?
+"$XDO" keydown Alt_L key F12 keyup Alt_L; sec 0.5
+! xprop -id "$AF" _NET_WM_STATE | grep -q ABOVE; check "and again takes it off" $?
+stop_clients
+
+echo "== 41. Alt+Tab list popup"
+stop_wm; stop_clients
+export TIEWM_CONFIG="$TMP/none.conf"; start_wm
+newwin l1 -t "First window" -w 300 -h 200 -c cc5555 -s 120 -p 100,100; L1=$LAST_ID
+newwin l2 -t "Second window" -w 300 -h 200 -c 55cc55 -s 120 -p 500,100; L2=$LAST_ID
+newwin l3 -t "Third window" -w 300 -h 200 -c 5555cc -s 120 -p 900,100; L3=$LAST_ID
+ovr() { "$XG" | grep -a "override=1" | grep -a "viewable=1" | head -1; }
+[ -z "$(ovr)" ]; check "no popup while not cycling" $?
+"$XDO" keydown Alt_L key Tab; sec 0.6
+O=$(ovr); [ -n "$O" ]; check "Alt+Tab shows a list window while Alt is held ($O)" $?
+H=$(echo "$O" | sed -n 's/.* h=\([0-9]*\) .*/\1/p'); [ "${H:-0}" -gt 60 ]; check "tall enough for three rows (h=$H)" $?
+import -window root "$TMP/altab.png" 2>/dev/null
+"$XDO" key Tab; sec 0.4
+[ -n "$(ovr)" ]; check "it stays while cycling on" $?
+"$XDO" keyup Alt_L; sec 0.5
+[ -z "$(ovr)" ]; check "releasing Alt closes it" $?
+stop_clients
+
 stop_wm
 
 echo
