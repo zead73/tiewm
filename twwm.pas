@@ -341,6 +341,7 @@ end;
 constructor TWM.Create(ADpy: PDisplay; const ACfg: TConfig);
 var
   MC: TMenuColors;
+  FallbackName: string;
 begin
   inherited Create;
   FCfg := ACfg;
@@ -365,14 +366,18 @@ begin
   TitleFontGrey := FCfg.FontGreyscale;
   TitleFontHint := FCfg.FontHinting;
   FTheme := TXfwmTheme.Create;
-  { a wrong theme name must not take the session down: fall back }
+  { a wrong theme name must not take the session down: fall back to Daloa, then Default }
   if not FTheme.Load(FCfg.Theme, FCfg.Palette) then
   begin
-    LogInfo('xfwm4 theme "' + FCfg.Theme + '" not found, using Daloa');
-    WriteLn(StdErr, 'tiewm: xfwm4 theme "', FCfg.Theme, '" not found, using Daloa');
+    FallbackName := '';
+    if (FCfg.Theme <> 'Daloa') and FTheme.Load('Daloa', FCfg.Palette) then FallbackName := 'Daloa'
+    else if (FCfg.Theme <> 'Default') and FTheme.Load('Default', FCfg.Palette) then FallbackName := 'Default';
+    if FallbackName = '' then
+      raise Exception.Create('no xfwm4 theme found (looked in ~/.themes, /usr/share/themes and /usr/local/share/themes): ' +
+        'install xfwm4 (it ships Daloa and Default) or put a theme in ~/.themes');
+    LogInfo('xfwm4 theme "' + FCfg.Theme + '" not found, using ' + FallbackName);
+    WriteLn(StdErr, 'tiewm: xfwm4 theme "', FCfg.Theme, '" not found, using ', FallbackName);
     Flush(StdErr);
-    if not FTheme.Load('Daloa', FCfg.Palette) then
-      raise Exception.Create('xfwm4 theme not found: ' + FCfg.Theme + ' (and no Daloa to fall back to)');
   end;
   FFont := TTitleFont.Create(FDpy, FScr, FCfg.TitleFont);
   FMenuFont := TTitleFont.Create(FDpy, FScr, FCfg.MenuFont);

@@ -1,0 +1,20 @@
+Package: tiewm
+Version: @VERSION@
+Section: x11
+Priority: optional
+Architecture: @ARCH@
+Depends: libx11-6, libxft2, libxext6, libxrandr2, libc6
+Recommends: xfwm4
+Suggests: picom, lxqt-panel
+Installed-Size: @SIZE@
+Maintainer: tiewm <noreply@users.noreply.github.com>
+Homepage: https://github.com/zead73/tiewm
+Description: floating X11 window manager that draws xfwm4 themes
+ tiewm is a floating window manager written in Free Pascal. It draws the
+ pixmap themes of xfwm4 (the themes themselves come from the xfwm4 package, a
+ recommended dependency) and works with EWMH panels and taskbars such as
+ lxqt-panel. It supports several monitors (RandR), workspaces, window rules,
+ and a config file in ~/.config/tiewm/tiewm.conf.
+ .
+ Pick "tiewm" as the window manager of your session (for LXQt: Session
+ Settings, Basic Settings), or choose the tiewm entry at the login screen.

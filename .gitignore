@@ -14,3 +14,7 @@
 # generated screenshots/composites (the demo screenshot is kept)
 /out/*
 !/out/tiewm-demo.png
+/dist/
+/tools/monset
+/tools/imgdiff
+/tools/palettecheck

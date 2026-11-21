@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=tiewm
+Comment=Floating window manager written in Free Pascal (xfwm4 themes)
+Exec=tiewm
+TryExec=tiewm
+Type=Application
+DesktopNames=tiewm

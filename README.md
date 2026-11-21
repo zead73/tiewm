@@ -11,6 +11,7 @@ scratch X server, and all seven installed xfwm4 themes match real xfwm4 pixel fo
 - [Default keys and mouse](#default-keys-and-mouse)
 - [Configuration](#configuration)
 - [Building and running](#building-and-running)
+- [Debian and Ubuntu](#debian-and-ubuntu)
 - [Testing](#testing)
 - [Source layout](#source-layout)
 - [How the theme engine works](#how-the-theme-engine-works)
@@ -150,7 +151,7 @@ settings need a restart.
 
     ./build.sh            # builds tiewm and every tool in tools/ (units go to a temp dir)
 
-Needs FPC 3.2.2 and the X11 libraries (Xlib, Xft, Xext, Xrandr, Xtst for the tests). Run it **only on a display you mean to
+Needs FPC 3.2.2 and the X11 libraries (Xlib, Xft, Xext, Xrandr, Xtst for the tests). On Debian / Ubuntu: `sudo apt install fpc libx11-dev libxft-dev libxext-dev libxrandr-dev libxtst-dev`. Run it **only on a display you mean to
 manage**: it refuses to start while another window manager owns the root.
 
     DISPLAY=:99 ./tiewm   # on a scratch Xvfb, for example
@@ -159,6 +160,20 @@ manage**: it refuses to start while another window manager owns the root.
 
 To use it as your window manager, point the session at the binary (for LXQt, the window manager setting in the session
 options, with `tiewm` in the PATH).
+
+### Debian and Ubuntu
+
+A `.deb` is built by `packaging/docker-deb.sh` (in a Debian container; needs docker) or `packaging/build-deb.sh` (on a Debian
+system with `fpc libx11-dev libxft-dev libxext-dev libxrandr-dev libxtst-dev dpkg-dev` installed). The result is
+`dist/tiewm_<version>_<arch>.deb`. Built on Debian 12 (bookworm), it runs on 12 and newer.
+
+    sudo apt install ./tiewm_0.5_amd64.deb      # pulls in libx11, libxft, libxext, libxrandr and, as a recommendation, xfwm4
+
+tiewm draws the xfwm4 themes, which Debian ships in the `xfwm4` package (it is only *recommended*: install it, or put a theme in
+`~/.themes`, or tiewm refuses to start with a message saying so). The package puts the binary in `/usr/bin/tiewm`, the docs and
+`tiewm.conf.example` in `/usr/share/doc/tiewm/`, and a **tiewm** entry in the login screen's session list. To use it under LXQt
+instead, set the window manager in Session Settings to `tiewm` (and `picom` if you want shadows and transparency). Without the
+package, `./build.sh` works the same way on Debian after installing the dev packages above.
 
 ## Testing
 

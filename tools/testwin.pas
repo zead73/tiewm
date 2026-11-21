@@ -31,6 +31,18 @@ program testwin;
 uses
   SysUtils, Classes, BaseUnix, ctypes, x, xlib, xutil, xatom;
 
+function ReadHostFile: string;
+var
+  F: Text;
+begin
+  Result := '';
+  AssignFile(F, '/etc/hostname');
+  {$I-}
+  Reset(F);
+  {$I+}
+  if IOResult = 0 then begin ReadLn(F, Result); CloseFile(F); end;
+end;
+
 var
   Dpy: PDisplay;
   Win: TWindow;
@@ -45,6 +57,8 @@ var
   IconSpec, IconLater, StateSpec, HintState, UnmappedMode: string;
   MoveResizeDir, Gravity: Integer;
   AskExtents, Hang: Boolean;
+  HostName: string;
+  Prop: TXTextProperty;
   UrgentAfter: Integer;
   LeaderSpec: string;
   ALeader: TAtom;
@@ -226,6 +240,12 @@ begin
   if Dpy = nil then begin WriteLn('cannot open display'); Halt(1); end;
   Win := XCreateSimpleWindow(Dpy, DefaultRootWindow(Dpy), 0, 0, W, H, 0, 0, Col);
   XStoreName(Dpy, Win, PChar(Title));
+  { real apps set WM_CLIENT_MACHINE; wmctrl -l on Debian crashes (segfault) for windows without it }
+  HostName := GetEnvironmentVariable('HOSTNAME');
+  if HostName = '' then HostName := ReadHostFile;
+  if HostName = '' then HostName := 'localhost';
+  Prop.value := PByte(PChar(HostName)); Prop.encoding := XA_STRING; Prop.format := 8; Prop.nitems := Length(HostName);
+  XSetWMClientMachine(Dpy, Win, @Prop);
   FillChar(Hints, SizeOf(Hints), 0);
   if (AspSpec <> '') then
   begin
