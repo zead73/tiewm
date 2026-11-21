@@ -33,7 +33,7 @@ Run it ONLY on a display you mean to manage: `DISPLAY=:99 ./tiewm` (it refuses t
 the root; `TIEWM_THEME`, `TIEWM_FONT`, `TIEWM_DEBUG=1` are the only settings so far). SIGTERM/SIGINT hand all
 windows back to the root cleanly.
 
-Works (286 scenario checks, `tools/wmtest.sh`, scratch Xvfb on :99 only): manage/adopt/unmanage, centred
+Works (298 scenario checks, `tools/wmtest.sh`, scratch Xvfb on :99 only): manage/adopt/unmanage, centred
 placement (honours USPosition), themed frames with shape, click-to-focus with click replay to the app,
 raise on click, active/inactive repaint, title updates, titlebar drag and Alt+drag (also with Num/Caps Lock),
 Alt+right-drag resize, edge/corner resize with min-size and size-increment hints, close button
@@ -148,6 +148,11 @@ the matching edge or centre. `_NET_WM_STATE_BELOW` and the two new messages are 
 Stick button and toggled images: the `T` letter in `button_layout` (for example `O|TSHMC`) is a working "on all workspaces"
 button, and buttons whose state is on are drawn with the theme's `-toggled` images: stick when the window is on all
 workspaces, shade when rolled up, maximize when maximized. The default layout still has no T, as in xfwm4.
+
+Toolkit-facing EWMH: `_NET_WM_ALLOWED_ACTIONS` (a taskbar can grey out what a window cannot do: no resize or maximize for a
+fixed-size window, no shade without a titlebar), `_NET_REQUEST_FRAME_EXTENTS` (a toolkit asks, before mapping, how thick the
+frame will be), and splash windows (`_NET_WM_WINDOW_TYPE_SPLASH`) get no frame. `_NET_WM_PING`: closing an app that supports it
+also pings it; if it has not answered 3 seconds later and you click Close again, tiewm kills it (the log says why).
 
 Careful when testing: the live session runs a process called `tiewm` too, so test scripts must never `pkill` by name
 (`wmtest.sh` only signals a tiewm whose DISPLAY is :99).

@@ -1004,6 +1004,47 @@ xprop -id "$TB" _NET_WM_STATE | grep -q STICKY; check "_NET_WM_STATE has STICKY"
 stop_clients
 export TIEWM_CONFIG="$TMP/none.conf"
 
+echo "== 37. _NET_WM_ALLOWED_ACTIONS, _NET_REQUEST_FRAME_EXTENTS, splash windows"
+stop_wm; stop_clients
+export TIEWM_CONFIG="$TMP/none.conf"; start_wm
+newwin aa -t "Actions" -w 300 -h 200 -c 7799aa -s 300 -p 400,300; AA=$LAST_ID
+A=$(xprop -id "$AA" _NET_WM_ALLOWED_ACTIONS)
+echo "$A" | grep -q _NET_WM_ACTION_CLOSE && echo "$A" | grep -q _NET_WM_ACTION_MAXIMIZE_HORZ && echo "$A" | grep -q _NET_WM_ACTION_SHADE && echo "$A" | grep -q _NET_WM_ACTION_MINIMIZE; check "a normal window lists close/maximize/shade/minimize as allowed" $?
+xprop -root _NET_SUPPORTED | grep -q _NET_WM_ALLOWED_ACTIONS && xprop -root _NET_SUPPORTED | grep -q _NET_REQUEST_FRAME_EXTENTS; check "both properties are listed in _NET_SUPPORTED" $?
+stop_clients
+newwin ad -t "Undecorated" -w 300 -h 200 -c 7799aa -s 300 -p 400,300 -D none; AD=$LAST_ID
+! xprop -id "$AD" _NET_WM_ALLOWED_ACTIONS | grep -q _NET_WM_ACTION_SHADE; check "a window without a titlebar cannot be shaded" $?
+stop_clients
+newwin rf -t "Asks extents" -w 300 -h 200 -c 7799aa -s 300 -p 400,300 -X; sec 0.3
+grep -q "requested extents=$M,$M,$T,$M" "$TMP/rf.log"; check "_NET_REQUEST_FRAME_EXTENTS before mapping is answered ($(grep -a 'requested extents' "$TMP/rf.log"))" $?
+stop_clients
+newwin rn -t "Asks extents, no frame" -w 300 -h 200 -c 7799aa -s 300 -p 400,300 -X -D none; sec 0.3
+grep -q "requested extents=0,0,0,0" "$TMP/rn.log"; check "and answers 0,0,0,0 for a window that wants no decorations ($(grep -a 'requested extents' "$TMP/rn.log"))" $?
+stop_clients
+newwin sp -t "Splash" -w 300 -h 200 -c 7799aa -s 300 -p 400,300 -y splash; SP=$LAST_ID
+[ "$(xprop -id "$SP" _NET_FRAME_EXTENTS | sed 's/.*= //')" = "0, 0, 0, 0" ]; check "a splash window gets no frame: $(xprop -id "$SP" _NET_FRAME_EXTENTS)" $?
+stop_clients
+
+echo "== 38. _NET_WM_PING: closing a hung app twice kills it"
+stop_wm; stop_clients
+export TIEWM_CONFIG="$TMP/none.conf"; start_wm
+newwin pg -t "Answers pings" -w 300 -h 200 -c 99aa77 -s 60 -p 400,300; PG=$LAST_ID
+wmctrl -i -c "$PG"; sec 1
+grep -q '^ping' "$TMP/pg.log" && grep -q WM_DELETE_WINDOW "$TMP/pg.log"; check "closing sends WM_DELETE_WINDOW and a _NET_WM_PING" $?
+! kill -0 "$PID_pg" 2>/dev/null; check "a responsive app closes normally" $?
+stop_clients
+newwin hg -t "Hung" -w 300 -h 200 -c aa7799 -s 60 -p 400,300 -H; HG=$LAST_ID
+G=$(absgeom "$HG"); RX=$(field "$G" x); RY=$(field "$G" y); RW=$(field "$G" w)
+"$XDO" move $((RX+RW-16)) $((RY-T+8)) click 1; sec 1
+kill -0 "$PID_hg" 2>/dev/null; check "first click on Close: a hung app is asked politely and stays" $?
+"$XDO" move $((RX+RW-16)) $((RY-T+8)) click 1; sec 0.8
+kill -0 "$PID_hg" 2>/dev/null; check "a second click within 3 s does not kill it yet" $?
+sleep 3
+"$XDO" move $((RX+RW-16)) $((RY-T+8)) click 1; sec 1
+! kill -0 "$PID_hg" 2>/dev/null; check "a click after 3 s without an answer kills it" $?
+grep -q 'did not answer a ping' "$TMP/tiewm.log"; check "and the log says why" $?
+stop_clients
+
 stop_wm
 
 echo

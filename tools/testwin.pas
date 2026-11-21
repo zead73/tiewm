@@ -13,10 +13,12 @@ program testwin;
             [-C instance,class]       set WM_CLASS
             [-D none|all|notitle|border|title]  set _MOTIF_WM_HINTS decorations before mapping
             [-M mode,seconds]         change _MOTIF_WM_HINTS later (same modes)
-            [-y desktop|dock|dockbelow]  set _NET_WM_WINDOW_TYPE (dockbelow also sets STATE_BELOW)
+            [-y desktop|dock|dockbelow|splash]  set _NET_WM_WINDOW_TYPE (dockbelow also sets STATE_BELOW)
             [-P 0xID]                 mark as transient for that window
             [-i seconds]              iconify itself (XIconifyWindow) after N seconds
             [-G n]                    win_gravity 1-10 (with -p; default Static=10, 0 = leave unset = NorthWest)
+            [-H]                      hung app: ignores WM_DELETE_WINDOW and never answers _NET_WM_PING
+            [-X]                      before mapping, send _NET_REQUEST_FRAME_EXTENTS and report the reply
             [-R dir]                  on a button press send _NET_WM_MOVERESIZE with that direction (0-11)
             [-n]                      ignore WM_DELETE_WINDOW (do not advertise it)
   Defaults: "testwin" 300x200 ff00ff, runs 30 s. Exits 0 on WM_DELETE_WINDOW. }
@@ -39,6 +41,12 @@ var
   ClassInst, ClassName: string;
   IconSpec, IconLater, StateSpec, HintState, UnmappedMode: string;
   MoveResizeDir, Gravity: Integer;
+  AskExtents, Hang: Boolean;
+  WmPing: TAtom;
+  Prots: array[0..1] of TAtom;
+  ExtTry, ExtFmt: Integer;
+  ExtType, ExtN, ExtAfter: culong;
+  ExtProp: PCULong;
   WmHints: TXWMHints;
   WmStateProp: array[0..1] of culong;
   AWmState: TAtom;
@@ -146,12 +154,14 @@ begin
   MotifMode := ''; MotifLater := ''; MotifAfter := 0; MotifChanged := False;
   ClassInst := ''; ClassName := '';
   StateSpec := ''; HintState := ''; UnmappedMode := ''; IconSpec := ''; IconLater := ''; IconAfter := 0; IconChanged := False;
-  MoveResizeDir := -1; Gravity := 10;
+  MoveResizeDir := -1; Gravity := 10; AskExtents := False; Hang := False;
   I := 1;
   while I <= ParamCount do
   begin
     Opt := ParamStr(I);
     if Opt = '-n' then NoDelete := True
+    else if Opt = '-X' then AskExtents := True
+    else if Opt = '-H' then Hang := True
     else if I < ParamCount then
     begin
       S := ParamStr(I + 1);
@@ -215,7 +225,9 @@ begin
   if HavePos then XMoveWindow(Dpy, Win, PosX, PosY);
   WmDelete := XInternAtom(Dpy, 'WM_DELETE_WINDOW', 0);
   WmProtocols := XInternAtom(Dpy, 'WM_PROTOCOLS', 0);
-  if not NoDelete then XSetWMProtocols(Dpy, Win, @WmDelete, 1);
+  WmPing := XInternAtom(Dpy, '_NET_WM_PING', 0);
+  Prots[0] := WmDelete; Prots[1] := WmPing;
+  if not NoDelete then XSetWMProtocols(Dpy, Win, @Prots[0], 2);
   if ParentId <> 0 then XSetTransientForHint(Dpy, Win, ParentId);
   if MotifMode <> '' then SetMotif(Dpy, Win, MotifMode);
   if IconSpec <> '' then SetIcons(Dpy, Win, IconSpec);
@@ -230,6 +242,7 @@ begin
   begin
     AType := XInternAtom(Dpy, '_NET_WM_WINDOW_TYPE', 0);
     if WinType = 'desktop' then ATypeDock := XInternAtom(Dpy, '_NET_WM_WINDOW_TYPE_DESKTOP', 0)
+    else if WinType = 'splash' then ATypeDock := XInternAtom(Dpy, '_NET_WM_WINDOW_TYPE_SPLASH', 0)
     else ATypeDock := XInternAtom(Dpy, '_NET_WM_WINDOW_TYPE_DOCK', 0);
     XChangeProperty(Dpy, Win, AType, XA_ATOM, 32, PropModeReplace, PByte(@ATypeDock), 1);
     if WinType = 'dockbelow' then
@@ -245,6 +258,29 @@ begin
     WmHints.flags := StateHint;
     WmHints.initial_state := IconicState;
     XSetWMHints(Dpy, Win, @WmHints);
+  end;
+  if AskExtents then
+  begin
+    FillChar(Msg, SizeOf(Msg), 0);
+    Msg._type := ClientMessage;
+    Msg.xclient.window := Win;
+    Msg.xclient.message_type := XInternAtom(Dpy, '_NET_REQUEST_FRAME_EXTENTS', 0);
+    Msg.xclient.format := 32;
+    XSendEvent(Dpy, DefaultRootWindow(Dpy), 0, SubstructureRedirectMask or SubstructureNotifyMask, @Msg);
+    XSync(Dpy, 0);
+    for ExtTry := 1 to 20 do
+    begin
+      ExtProp := nil;
+      if (XGetWindowProperty(Dpy, Win, XInternAtom(Dpy, '_NET_FRAME_EXTENTS', 0), 0, 4, 0, XA_CARDINAL,
+            @ExtType, @ExtFmt, @ExtN, @ExtAfter, @ExtProp) = 0) and (ExtProp <> nil) and (ExtN = 4) then
+      begin
+        Say(Format('requested extents=%d,%d,%d,%d', [PCULong(ExtProp)[0], PCULong(ExtProp)[1], PCULong(ExtProp)[2], PCULong(ExtProp)[3]]));
+        XFree(ExtProp);
+        Break;
+      end;
+      if ExtProp <> nil then XFree(ExtProp);
+      Sleep(50);
+    end;
   end;
   XSelectInput(Dpy, Win, StructureNotifyMask or ButtonPressMask or FocusChangeMask or ExposureMask or KeyPressMask);
   if UnmappedMode = '' then XMapWindow(Dpy, Win)
@@ -327,12 +363,25 @@ begin
         FocusOut: Say('FocusOut');
         KeyPress: Say('KeyPress');
         ClientMessage:
-          if (Ev.xclient.message_type = WmProtocols) and (TAtom(Ev.xclient.data.l[0]) = WmDelete) then
+          if (Ev.xclient.message_type = WmProtocols) and (TAtom(Ev.xclient.data.l[0]) = WmPing) then
+          begin
+            Say('ping');
+            if not Hang then
+            begin
+              Ev.xclient.window := DefaultRootWindow(Dpy);
+              XSendEvent(Dpy, DefaultRootWindow(Dpy), 0, SubstructureRedirectMask or SubstructureNotifyMask, @Ev);
+              XFlush(Dpy);
+            end;
+          end
+          else if (Ev.xclient.message_type = WmProtocols) and (TAtom(Ev.xclient.data.l[0]) = WmDelete) then
           begin
             Say('WM_DELETE_WINDOW');
-            XDestroyWindow(Dpy, Win);
-            XCloseDisplay(Dpy);
-            Halt(0);
+            if not Hang then
+            begin
+              XDestroyWindow(Dpy, Win);
+              XCloseDisplay(Dpy);
+              Halt(0);
+            end;
           end;
       end;
     end;

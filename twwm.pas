@@ -21,7 +21,9 @@ type
     X, Y, W, H: Integer;          { frame outer geometry, root relative }
     Name: string;
     IgnoreUnmap: Integer;         { unmaps we caused ourselves }
-    InputHint, HasDelete, HasTakeFocus: Boolean;
+    InputHint, HasDelete, HasTakeFocus, HasPing: Boolean;
+    PingSent: culong;             { server time of the last _NET_WM_PING we sent, 0 = answered or none }
+    PingTick: Int64;              { our own clock (ms) when it was sent }
     MinW, MinH, MaxW, MaxH, IncW, IncH, BaseW, BaseH: Integer;   { client sizes }
     Gravity: Integer;             { ICCCM win_gravity: 1 NorthWest (default) .. 9 SouthEast, 10 Static }
     Maximized, Fullscreen, Iconic, Above, Below, Shaded, Modal, StartIconic: Boolean;
@@ -83,7 +85,8 @@ type
     aNetWmState, aMaxVert, aMaxHorz, aCloseWindow, aWindowType: TAtom;
     aTypeDock, aTypeDesktop, aTypeMenu, aTypeDropdown, aTypePopup, aTypeTooltip, aTypeNotification, aTypeCombo, aTypeDnd: TAtom;
     aHidden, aFullscreen, aWmDesktop, aBelow, aAbove, aShaded, aSticky, aDeskNames, aMotif, aNetWmIcon, aModal, aSkipTaskbar, aSkipPager, aDemandsAttn: TAtom;
-    aMoveResize, aMoveResizeWin,
+    aPing, aMoveResize, aMoveResizeWin, aAllowed, aReqExtents, aTypeSplash: TAtom;
+    FActions: array[0..11] of TAtom;
     aStrut, aStrutPartial, aNumDesktops, aCurDesktop, aWorkarea, aDeskGeom, aDeskViewport, aSupportingCheck: TAtom;
     { drag state }
     FDrag: TDragKind;
@@ -147,6 +150,7 @@ type
     procedure FocusClient(C: TClient; ATime: culong);
     procedure RaiseClient(C: TClient);
     procedure CloseClient(C: TClient);
+    procedure SendProtocol(C: TClient; Proto: TAtom);
     procedure ToggleMaximize(C: TClient);
     procedure SetFullscreen(C: TClient; On: Boolean);
     procedure SetAbove(C: TClient; On: Boolean);
@@ -192,6 +196,7 @@ type
     procedure UpdateClientList;
     procedure SetWmState(C: TClient; State: Integer);
     procedure UpdateNetState(C: TClient);
+    procedure SetAllowedActions(C: TClient);
     procedure GravityFrame(C: TClient; ReqX, ReqY: Integer; const E: TExt; out FX, FY: Integer);
     procedure Place(C: TClient; HasPos: Boolean; CX, CY: Integer);
     procedure BeginDrag(C: TClient; Kind: TDragKind; Hit: THitKind; XRoot, YRoot: Integer; ATime: culong);
@@ -206,6 +211,7 @@ type
     procedure OnButtonRelease(var Ev: TXButtonEvent);
     procedure OnMotion(var Ev: TXMotionEvent);
     procedure OnClientMessage(var Ev: TXClientMessageEvent);
+    procedure ReplyFrameExtents(Win: TWindow);
     procedure OnMoveResize(C: TClient; var Ev: TXClientMessageEvent);
     procedure OnMoveResizeWindow(C: TClient; var Ev: TXClientMessageEvent);
     procedure ApplyRequest(C: TClient; Mask: culong; RX, RY, RW, RH: Integer);
@@ -413,6 +419,15 @@ begin
   aSkipPager := A('_NET_WM_STATE_SKIP_PAGER');
   aDemandsAttn := A('_NET_WM_STATE_DEMANDS_ATTENTION');
   aMoveResize := A('_NET_WM_MOVERESIZE'); aMoveResizeWin := A('_NET_MOVERESIZE_WINDOW');
+  aPing := A('_NET_WM_PING');
+  aAllowed := A('_NET_WM_ALLOWED_ACTIONS'); aReqExtents := A('_NET_REQUEST_FRAME_EXTENTS');
+  aTypeSplash := A('_NET_WM_WINDOW_TYPE_SPLASH');
+  FActions[0] := A('_NET_WM_ACTION_MOVE'); FActions[1] := A('_NET_WM_ACTION_RESIZE');
+  FActions[2] := A('_NET_WM_ACTION_MINIMIZE'); FActions[3] := A('_NET_WM_ACTION_SHADE');
+  FActions[4] := A('_NET_WM_ACTION_STICK'); FActions[5] := A('_NET_WM_ACTION_MAXIMIZE_HORZ');
+  FActions[6] := A('_NET_WM_ACTION_MAXIMIZE_VERT'); FActions[7] := A('_NET_WM_ACTION_FULLSCREEN');
+  FActions[8] := A('_NET_WM_ACTION_CHANGE_DESKTOP'); FActions[9] := A('_NET_WM_ACTION_CLOSE');
+  FActions[10] := A('_NET_WM_ACTION_ABOVE'); FActions[11] := A('_NET_WM_ACTION_BELOW');
   aSticky := A('_NET_WM_STATE_STICKY');
   aDeskNames := A('_NET_DESKTOP_NAMES');
   aStrut := A('_NET_WM_STRUT'); aStrutPartial := A('_NET_WM_STRUT_PARTIAL');
@@ -749,7 +764,7 @@ procedure TWM.SetupEwmh;
 var
   Sup: array of culong;
   Name: string;
-  Atoms: array[0..27] of TAtom;
+  Atoms: array[0..29] of TAtom;
   Names: string;
   Zero: array of culong;
   I: Integer;
@@ -767,6 +782,7 @@ begin
   Atoms[17] := aSticky; Atoms[18] := aDeskNames; Atoms[19] := aAbove; Atoms[20] := aShaded;
   Atoms[21] := aModal; Atoms[22] := aSkipTaskbar; Atoms[23] := aSkipPager; Atoms[24] := aDemandsAttn;
   Atoms[25] := aBelow; Atoms[26] := aMoveResize; Atoms[27] := aMoveResizeWin;
+  Atoms[28] := aAllowed; Atoms[29] := aReqExtents;
   SetLength(Sup, Length(Atoms));
   for I := 0 to High(Atoms) do Sup[I] := Atoms[I];
   SetCards(FRoot, aSupported, Sup);
@@ -850,6 +866,28 @@ begin
     XDeleteProperty(FDpy, C.Win, aNetWmState)
   else
     XChangeProperty(FDpy, C.Win, aNetWmState, XA_ATOM, 32, PropModeReplace, PByte(@V[0]), Length(V));
+  SetAllowedActions(C);
+end;
+
+{ _NET_WM_ALLOWED_ACTIONS: what a taskbar / pager may offer for this window }
+procedure TWM.SetAllowedActions(C: TClient);
+var
+  V: array[0..11] of TAtom;
+  N, I: Integer;
+  Fixed: Boolean;
+begin
+  Fixed := (C.MinW >= C.MaxW) and (C.MinH >= C.MaxH);
+  N := 0;
+  for I := 0 to 11 do
+  begin
+    case I of
+      1, 5, 6: if Fixed then Continue;          { a window of fixed size cannot be resized or maximized }
+      3: if not C.Decorated then Continue;       { nothing to roll up to }
+    end;
+    V[N] := FActions[I];
+    Inc(N);
+  end;
+  XChangeProperty(FDpy, C.Win, aAllowed, XA_ATOM, 32, PropModeReplace, PByte(@V[0]), N);
 end;
 
 function TWM.ExtraHas(C: TClient; A: TAtom): Boolean;
@@ -1001,6 +1039,7 @@ begin
     C.Transient := TWin;
   C.HasDelete := False;
   C.HasTakeFocus := False;
+  C.HasPing := False;
   Prots := nil;
   NProt := 0;
   if (XGetWMProtocols(FDpy, C.Win, @Prots, @NProt) <> 0) and (Prots <> nil) then
@@ -1009,6 +1048,7 @@ begin
     begin
       if Prots[I] = aDelete then C.HasDelete := True;
       if Prots[I] = aTakeFocus then C.HasTakeFocus := True;
+      if Prots[I] = aPing then C.HasPing := True;
     end;
     XFree(Prots);
   end;
@@ -1271,7 +1311,7 @@ begin
   if Startup then C.StartIconic := (Atr.map_state = IsUnmapped) and (WmStateOf(Win) = IconicState);
   ReadStates(C, StickyInit);
   ReadIcon(C);
-  C.Decorated := WantsDecorations(Win);
+  C.Decorated := WantsDecorations(Win) and not WindowTypeIs(Win, aTypeSplash);
   { a rule from the config file (matched by WM_CLASS) beats the app's own hints }
   if FindWindowRule(FCfg, C.ResName, C.ResClass, RuleTb) then
   begin
@@ -1464,20 +1504,41 @@ begin
   end;
 end;
 
-procedure TWM.CloseClient(C: TClient);
+{ Sends a ClientMessage of WM_PROTOCOLS type to a client. }
+procedure TWM.SendProtocol(C: TClient; Proto: TAtom);
 var
   Ev: TXEvent;
 begin
+  FillChar(Ev, SizeOf(Ev), 0);
+  Ev.xclient._type := ClientMessage;
+  Ev.xclient.window := C.Win;
+  Ev.xclient.message_type := aProtocols;
+  Ev.xclient.format := 32;
+  Ev.xclient.data.l[0] := clong(Proto);
+  Ev.xclient.data.l[1] := clong(CurrentTime);
+  Ev.xclient.data.l[2] := clong(C.Win);
+  XSendEvent(FDpy, C.Win, 0, NoEventMask, @Ev);
+end;
+
+{ Asks the app to close. If it supports _NET_WM_PING we also ping it: a window that has not
+  answered a ping sent more than 3 seconds ago is hung, and closing it again kills it. }
+procedure TWM.CloseClient(C: TClient);
+begin
   if C.HasDelete then
   begin
-    FillChar(Ev, SizeOf(Ev), 0);
-    Ev.xclient._type := ClientMessage;
-    Ev.xclient.window := C.Win;
-    Ev.xclient.message_type := aProtocols;
-    Ev.xclient.format := 32;
-    Ev.xclient.data.l[0] := clong(aDelete);
-    Ev.xclient.data.l[1] := clong(CurrentTime);
-    XSendEvent(FDpy, C.Win, 0, NoEventMask, @Ev);
+    if C.HasPing and (C.PingSent <> 0) and (GetTickCount64 - C.PingTick > 3000) then
+    begin
+      Log(Format('0x%x did not answer a ping: killing it', [C.Win]));
+      XKillClient(FDpy, C.Win);
+      Exit;
+    end;
+    if C.HasPing and (C.PingSent = 0) then
+    begin
+      C.PingSent := 1;
+      C.PingTick := GetTickCount64;
+      SendProtocol(C, aPing);
+    end;
+    SendProtocol(C, aDelete);
   end
   else
     XKillClient(FDpy, C.Win);
@@ -2596,6 +2657,29 @@ begin
   Log(Format('moveresize drag=%d', [Ord(FDrag)]));
 end;
 
+{ _NET_REQUEST_FRAME_EXTENTS: a toolkit asks, before mapping, how thick our frame will be }
+procedure TWM.ReplyFrameExtents(Win: TWindow);
+var
+  C: TClient;
+  E: TExt;
+  Tmp: Boolean;
+begin
+  C := FindClient(Win);
+  Tmp := C = nil;
+  if Tmp then
+  begin
+    C := TClient.Create;
+    C.Win := Win;
+    C.Decorated := WantsDecorations(Win) and not WindowTypeIs(Win, aTypeSplash);
+  end;
+  try
+    E := Ext(C);
+    SetCards(Win, aFrameExtents, [culong(E.L), culong(E.R), culong(E.T), culong(E.B)]);
+  finally
+    if Tmp then C.Free;
+  end;
+end;
+
 procedure TWM.OnClientMessage(var Ev: TXClientMessageEvent);
 var
   C: TClient;
@@ -2607,6 +2691,11 @@ begin
   if (Ev.message_type = aCurDesktop) and (Ev.window = FRoot) then
   begin
     SwitchDesktop(Integer(Ev.data.l[0]), CurrentTime);
+    Exit;
+  end;
+  if Ev.message_type = aReqExtents then
+  begin
+    ReplyFrameExtents(Ev.window);
     Exit;
   end;
   C := FindClient(Ev.window);
@@ -2629,7 +2718,9 @@ begin
         end;
     Exit;
   end;
-  if Ev.message_type = aActive then
+  if (Ev.message_type = aProtocols) and (TAtom(Ev.data.l[0]) = aPing) then
+    C.PingSent := 0      { the app answered }
+  else if Ev.message_type = aActive then
     Activate(C, CurrentTime)
   else if Ev.message_type = aMoveResize then
     OnMoveResize(C, Ev)
