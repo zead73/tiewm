@@ -49,6 +49,7 @@ type
   TConfig = record
     Theme, TitleFont, MenuFont, ButtonLayout, TitleAlign: string;
     NumDesktops: Integer;
+    UndecoratedBorder: Integer;    { px of resize border around windows without a titlebar, 0 = none }
     FontGreyscale: Boolean;
     FontHinting: Integer;          { 0..3, -1 = leave to fontconfig }
     Palette: TThemePalette;
@@ -132,6 +133,7 @@ begin
   Result.ButtonLayout := 'O|SHMC';
   Result.TitleAlign := 'left';
   Result.NumDesktops := 4;
+  Result.UndecoratedBorder := 0;
   Result.FontGreyscale := True;
   Result.FontHinting := 3;
   Result.Palette := DefaultPalette;
@@ -548,6 +550,12 @@ begin
     if (N >= 1) and (N <= 20) then C.NumDesktops := N
     else Warn(C, Format('line %d: desktops must be 1..20, not "%s"', [Line, V]));
   end
+  else if K = 'undecorated_border' then
+  begin
+    N := StrToIntDef(V, -1);
+    if (N >= 0) and (N <= 16) then C.UndecoratedBorder := N
+    else Warn(C, Format('line %d: undecorated_border must be 0..16 pixels, not "%s"', [Line, V]));
+  end
   else if K = 'font_greyscale' then
   begin
     if ParseBool(V, B) then C.FontGreyscale := B
@@ -702,6 +710,7 @@ begin
   Result := Result + 'theme = ' + C.Theme + #10 + 'title_font = ' + C.TitleFont + #10 + 'menu_font = ' + C.MenuFont + #10 +
     'button_layout = ' + C.ButtonLayout + #10 + 'title_align = ' + C.TitleAlign + #10 +
     'desktops = ' + IntToStr(C.NumDesktops) + #10 +
+    'undecorated_border = ' + IntToStr(C.UndecoratedBorder) + #10 +
     'font_greyscale = ' + BoolToStr(C.FontGreyscale, 'true', 'false') + #10 +
     'font_hinting = ' + IntToStr(C.FontHinting) + #10 +
     'log_file = ' + C.LogFile + #10 +

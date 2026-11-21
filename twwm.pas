@@ -145,6 +145,7 @@ type
     procedure SetShaded(C: TClient; On: Boolean);
     function WantsDecorations(Win: TWindow): Boolean;
     procedure ReadClass(C: TClient);
+    function HitFor(C: TClient; X, Y: Integer): THit;
     procedure SaveDecorRule(C: TClient);
     procedure SetDecorated(C: TClient; On: Boolean);
     function OptsFor(C: TClient): TFrameOpts;
@@ -808,9 +809,15 @@ function TWM.Ext(C: TClient): TExt;
 var
   M: TThemeMetrics;
 begin
-  if C.Fullscreen or not C.Decorated then
+  if C.Fullscreen or ((not C.Decorated) and (C.Maximized or (FCfg.UndecoratedBorder = 0))) then
   begin
     Result.L := 0; Result.R := 0; Result.T := 0; Result.B := 0;
+  end
+  else if not C.Decorated then
+  begin
+    { windows without a titlebar get an optional thin resize border }
+    Result.L := FCfg.UndecoratedBorder; Result.R := FCfg.UndecoratedBorder;
+    Result.T := FCfg.UndecoratedBorder; Result.B := FCfg.UndecoratedBorder;
   end
   else
   begin
@@ -878,8 +885,21 @@ var
   Pm, Mask: TPixmap;
   TX, BY: Integer;
 begin
-  if C.Fullscreen or not C.Decorated then Exit;
+  if C.Fullscreen then Exit;
   Act := C = FFocused;
+  if not C.Decorated then
+  begin
+    { no frame graphics; only the optional solid resize border changes with focus }
+    if (Ext(C).L > 0) and ((not C.Painted) or (C.PaintedActive <> Act) or Force) then
+    begin
+      if Act then XSetWindowBackground(FDpy, C.Frame, FCfg.Palette.Color1[wsActive] and $FFFFFF)
+      else XSetWindowBackground(FDpy, C.Frame, FCfg.Palette.Color1[wsInactive] and $FFFFFF);
+      XClearWindow(FDpy, C.Frame);
+    end;
+    C.Painted := True;
+    C.PaintedActive := Act;
+    Exit;
+  end;
   if (not Force) and C.Painted and (C.PaintedActive = Act) and (C.PaintedW = C.W) and
      (C.PaintedH = C.H) and (C.PaintedName = C.Name) then Exit;
   if Act then
@@ -909,11 +929,9 @@ begin
   C.X := NX; C.Y := NY; C.W := NW; C.H := NH;
   ClientSizeOf(C, CW, CH);
   XMoveResizeWindow(FDpy, C.Frame, NX, NY, NW, NH);
-  if Resized then
-  begin
-    XResizeWindow(FDpy, C.Win, CW, CH);
-    Repaint(C, True);
-  end;
+  if Resized or (not C.Decorated) then
+    XMoveResizeWindow(FDpy, C.Win, Ext(C).L, Ext(C).T, CW, CH);   { extents can change (maximize) }
+  if Resized then Repaint(C, True);
   SendConfigure(C);
 end;
 
@@ -1215,6 +1233,7 @@ begin
     SetFrameGeometry(C, AX, AY, AW, AH);
   end;
   UpdateNetState(C);
+  if not C.Decorated then SetFrameExtentsProp(C);   { the thin border goes away while maximized }
 end;
 
 { ---- iconify / fullscreen ---- }
@@ -1360,16 +1379,56 @@ begin
   end;
   XMoveResizeWindow(FDpy, C.Frame, C.X, C.Y, C.W, C.H);
   XMoveResizeWindow(FDpy, C.Win, E.L, E.T, CW, CH);
-  if On then
-    Repaint(C, True)
-  else
+  if not On then
   begin
     C.Painted := False;
     XShapeCombineMask(FDpy, C.Frame, ShapeBounding, 0, 0, None, ShapeSet);   { plain rectangle }
   end;
+  Repaint(C, True);   { frame graphics, or just the thin border colour }
   SetFrameExtentsProp(C);
   SendConfigure(C);
   Log(Format('0x%x "%s": titlebar %s', [C.Win, C.Name, IfThen(On, 'on', 'off')]));
+end;
+
+{ What is under the point X,Y of C's frame: the theme's hit test for decorated windows, a thin
+  resize border for undecorated ones. The corner zones run 16 px along the edges. }
+function TWM.HitFor(C: TClient; X, Y: Integer): THit;
+const
+  CornerZone = 16;
+var
+  B, W, H: Integer;
+begin
+  if C.Decorated then Exit(FTheme.HitTest(OptsFor(C), C.W, C.H, X, Y));
+  Result.Kind := hkNone;
+  Result.Letter := #0;
+  B := Ext(C).L;
+  W := C.W;
+  H := C.H;
+  if (B = 0) or (X < 0) or (Y < 0) or (X >= W) or (Y >= H) then Exit;
+  if Y < B then
+  begin
+    if X < CornerZone then Result.Kind := hkNW
+    else if X >= W - CornerZone then Result.Kind := hkNE
+    else Result.Kind := hkN;
+  end
+  else if Y >= H - B then
+  begin
+    if X < CornerZone then Result.Kind := hkSW
+    else if X >= W - CornerZone then Result.Kind := hkSE
+    else Result.Kind := hkS;
+  end
+  else if X < B then
+  begin
+    if Y < CornerZone then Result.Kind := hkNW
+    else if Y >= H - CornerZone then Result.Kind := hkSW
+    else Result.Kind := hkW;
+  end
+  else if X >= W - B then
+  begin
+    if Y < CornerZone then Result.Kind := hkNE
+    else if Y >= H - CornerZone then Result.Kind := hkSE
+    else Result.Kind := hkE;
+  end;
 end;
 
 function TWM.OptsFor(C: TClient): TFrameOpts;
@@ -1883,7 +1942,7 @@ procedure TWM.DefineHitCursor(C: TClient; XF, YF: Integer);
 var
   H: THit;
 begin
-  H := FTheme.HitTest(OptsFor(C), C.W, C.H, XF, YF);
+  H := HitFor(C, XF, YF);
   XDefineCursor(FDpy, C.Frame, FCursors[H.Kind]);
 end;
 
@@ -2019,7 +2078,7 @@ begin
   if C = nil then Exit;
   FocusClient(C, Ev.time);
   RaiseClient(C);
-  H := FTheme.HitTest(OptsFor(C), C.W, C.H, Ev.x, Ev.y);
+  H := HitFor(C, Ev.x, Ev.y);
   if Ev.button = 3 then
   begin
     { right-click on the titlebar: window menu }
@@ -2076,7 +2135,7 @@ begin
     C := FPressClient;
     FPressClient := nil;
     if Ev.window <> C.Frame then Exit;
-    H := FTheme.HitTest(OptsFor(C), C.W, C.H, Ev.x, Ev.y);
+    H := HitFor(C, Ev.x, Ev.y);
     if (H.Kind = hkButton) and (H.Letter = FPressLetter) then
       case H.Letter of
         'C': CloseClient(C);

@@ -33,7 +33,7 @@ Run it ONLY on a display you mean to manage: `DISPLAY=:99 ./tiewm` (it refuses t
 the root; `TIEWM_THEME`, `TIEWM_FONT`, `TIEWM_DEBUG=1` are the only settings so far). SIGTERM/SIGINT hand all
 windows back to the root cleanly.
 
-Works (198 scenario checks, `tools/wmtest.sh`, scratch Xvfb on :99 only): manage/adopt/unmanage, centred
+Works (216 scenario checks, `tools/wmtest.sh`, scratch Xvfb on :99 only): manage/adopt/unmanage, centred
 placement (honours USPosition), themed frames with shape, click-to-focus with click replay to the app,
 raise on click, active/inactive repaint, title updates, titlebar drag and Alt+drag (also with Num/Caps Lock),
 Alt+right-drag resize, edge/corner resize with min-size and size-increment hints, close button
@@ -62,6 +62,10 @@ appears/disappears, the client stays where it is). Undecorated windows still mov
 Alt+right-drag or Alt+F8, maximize/fullscreen/close/menu (Alt+space) as usual; Shade is disabled for them.
 The window menu's "No titlebar" entry (Alt+space opens it on an undecorated window) turns the frame off or on for any
 window by hand; the client never moves, and a titlebar that would land above the work area pushes the window down.
+
+Undecorated border: `undecorated_border = N` (0..16 px, default 0) gives windows without a titlebar a thin solid border in
+the palette colour (focused/unfocused) with real resize zones (edges, 16 px corner zones, resize cursors); the frame grows
+around the client, `_NET_FRAME_EXTENTS` = N, and the border disappears while maximized or fullscreen.
 
 Window rules: `[windows]` in the config (`Class = titlebar|no_titlebar`, matched by WM_CLASS class or instance, case
 insensitive) override what an app asks for. The window menu's "No titlebar" writes the rule itself: only when the choice
@@ -117,7 +121,7 @@ click-to-activate / click-again-to-minimize / restore work, Alt+Tab, fullscreen,
 transient/centred/focused, Vivaldi F11 fullscreen on and off. Found and fixed: lxqt-panel's taskbar shows nothing
 unless every window has `_NET_WM_DESKTOP`.
 
-## Planned
+## Done: titlebar removal for windows that draw their own
 
 - **Remove the titlebar of a window that already draws its own** (Electron/CSD apps such as the Claude desktop app),
   and remember the choice in the config file.
@@ -128,8 +132,8 @@ unless every window has `_NET_WM_DESKTOP`.
   3. ~~Persist it per application in the config file~~ **done**: a `[windows]` section, `Class = no_titlebar` or
      `Class = titlebar`, matched by `WM_CLASS` (class or instance, case-insensitive); the menu toggle writes/removes the
      line itself and leaves the rest of the file, comments included, byte-for-byte alone.
-  4. Design points: undecorated windows still need a way to move (Alt+drag already works) and resize (thin border
-     option or Alt+right-drag), frame extents become 0 or the border only, and `_NET_FRAME_EXTENTS` must follow.
+  4. ~~Keep undecorated windows usable~~ **done**: Alt+drag moves them, Alt+right-drag / Alt+F8 resize them, and the
+     optional `undecorated_border = N` config setting adds a thin N-pixel resize border (drag an edge or corner).
 
 Deliberately not done: other key bindings, `--replace`,
 multi-monitor, modal dialogs, adopting windows that are

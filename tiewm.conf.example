@@ -25,6 +25,12 @@
 # Font of the window menu (right-click the titlebar, click the menu button, or Alt+space).
 #menu_font = Sans 10
 
+# Windows without a titlebar (apps that draw their own, or ones set to "No titlebar") normally get no frame at
+# all.  This adds a thin resize border of that many pixels (0..16) around them, drawn in the palette colour
+# (blue when focused, grey otherwise) and gone while the window is maximized or fullscreen.  0 = no border:
+# those windows then resize with Alt+right-drag or Alt+F8.
+#undecorated_border = 0
+
 # Number of workspaces, 1..20.
 #desktops = 4
 

@@ -726,6 +726,54 @@ xprop -id "$LAST_ID" _NET_FRAME_EXTENTS | grep -q "= 0, 0, 0, 0" && ! grep -q 'H
 stop_wm; stop_clients
 export TIEWM_CONFIG="$TMP/none.conf"; start_wm
 
+echo "== 29. undecorated_border: an optional thin resize border for windows without a titlebar"
+stop_wm; stop_clients
+printf 'undecorated_border = 4\n' >"$TMP/c11.conf"; printf 'undecorated_border = 99\n' >"$TMP/c12.conf"
+"$WM" --check-config "$TMP/c11.conf" | grep -q 'undecorated_border = 4'; check "--check-config shows undecorated_border" $?
+OUT=$("$WM" --check-config "$TMP/c12.conf" 2>&1); RC=$?
+[ $RC -eq 1 ] && echo "$OUT" | grep -q 'line 1: undecorated_border must be 0..16'; check "a value out of range is only a warning" $?
+export TIEWM_CONFIG="$TMP/c11.conf"; start_wm
+newwin ub -t "Border" -w 300 -h 200 -c cc9900 -s 300 -p 400,300 -D none; UB=$LAST_ID
+xprop -id "$UB" _NET_FRAME_EXTENTS | grep -q "= 4, 4, 4, 4"; check "an undecorated window gets 4 px extents" $?
+G=$(absgeom "$UB"); [ "$(field "$G" x)" -eq 400 ] && [ "$(field "$G" y)" -eq 300 ] && [ "$(frameh "$UB")" = "208" ]; check "the client stays where the app put it; the frame is 4 px bigger on every side ($G, frame h $(frameh "$UB"))" $?
+import -window root "$TMP/ub1.png" 2>/dev/null
+[ "$(magick "$TMP/ub1.png" -format '%[hex:p{398,350}]' info:)" = "14529E" ] && [ "$(magick "$TMP/ub1.png" -format '%[hex:p{410,350}]' info:)" = "CC9900" ]; check "the border is drawn in the active colour, the client inside it" $?
+newwin ub2 -t "Normal neighbour" -w 300 -h 200 -c 0099cc -s 300 -p 800,300; UB2=$LAST_ID
+sleep 0.3; import -window root "$TMP/ub2.png" 2>/dev/null
+[ "$(magick "$TMP/ub2.png" -format '%[hex:p{398,350}]' info:)" = "323232" ]; check "it turns grey when another window has the focus" $?
+xprop -id "$UB2" _NET_FRAME_EXTENTS | grep -q "= $M, $M, $T, $M"; check "decorated windows are not affected" $?
+"$XDO" move 450 400 click 1; sec 0.5
+[ "$(hexnorm "$(active)")" = "$(hexnorm "$UB")" ]; check "clicking inside focuses it again" $?
+G0=$(absgeom "$UB"); X0=$(field "$G0" x); Y0=$(field "$G0" y); W0=$(field "$G0" w); H0=$(field "$G0" h)
+"$XDO" drag $((X0+W0+2)) $((Y0+100)) $((X0+W0+62)) $((Y0+100)); sec 0.7
+G=$(absgeom "$UB"); [ "$(field "$G" w)" -eq $((W0+60)) ] && [ "$(field "$G" x)" -eq "$X0" ]; check "dragging the right border resizes it (+60 wide: $G)" $?
+"$XDO" drag $((X0+100)) $((Y0+H0+2)) $((X0+100)) $((Y0+H0+42)); sec 0.7
+G=$(absgeom "$UB"); [ "$(field "$G" h)" -eq $((H0+40)) ]; check "the bottom border resizes it (+40 high: $G)" $?
+G0=$(absgeom "$UB"); X0=$(field "$G0" x); Y0=$(field "$G0" y); W0=$(field "$G0" w); H0=$(field "$G0" h)
+"$XDO" drag $((X0-2)) $((Y0-2)) $((X0-32)) $((Y0-22)); sec 0.7
+G=$(absgeom "$UB"); [ "$(field "$G" x)" -eq $((X0-30)) ] && [ "$(field "$G" y)" -eq $((Y0-20)) ] && [ "$(field "$G" w)" -eq $((W0+30)) ] && [ "$(field "$G" h)" -eq $((H0+20)) ]; check "the top-left corner resizes from that corner ($G)" $?
+G0=$(absgeom "$UB")
+"$XDO" keydown Super_L key Return keyup Super_L; sec 0.8
+G=$(absgeom "$UB")
+[ "$(field "$G" x)" -eq 0 ] && [ "$(field "$G" w)" -eq 1280 ] && [ "$(field "$G" h)" -eq 800 ] && xprop -id "$UB" _NET_FRAME_EXTENTS | grep -q "= 0, 0, 0, 0"; check "maximized: no border, fills the work area ($G)" $?
+"$XDO" keydown Super_L key Return keyup Super_L; sec 0.8
+G=$(absgeom "$UB"); [ "$G" = "$G0" ] && xprop -id "$UB" _NET_FRAME_EXTENTS | grep -q "= 4, 4, 4, 4"; check "restored: the border and the exact old geometry are back ($G)" $?
+wmctrl -i -r "$UB" -b add,fullscreen; sec 0.7
+G=$(absgeom "$UB"); [ "$(field "$G" w)" -eq 1280 ] && xprop -id "$UB" _NET_FRAME_EXTENTS | grep -q "= 0, 0, 0, 0"; check "fullscreen: no border ($G)" $?
+wmctrl -i -r "$UB" -b remove,fullscreen; sec 0.7
+G=$(absgeom "$UB"); [ "$G" = "$G0" ] && xprop -id "$UB" _NET_FRAME_EXTENTS | grep -q "= 4, 4, 4, 4"; check "and it returns with the border ($G)" $?
+"$XDO" keydown Alt_L key space keyup Alt_L; sec 0.5; "$XDO" key Down key Down key Down key Down key Down key Down key Down key Return; sec 0.9
+G=$(absgeom "$UB")
+xprop -id "$UB" _NET_FRAME_EXTENTS | grep -q "= $M, $M, $T, $M" && [ "$G" = "$G0" ]; check "menu: No titlebar off gives it the real titlebar, client in place ($G)" $?
+"$XDO" keydown Alt_L key space keyup Alt_L; sec 0.5; "$XDO" key Down key Down key Down key Down key Down key Down key Down key Down key Return; sec 0.9
+G=$(absgeom "$UB")
+xprop -id "$UB" _NET_FRAME_EXTENTS | grep -q "= 4, 4, 4, 4" && [ "$G" = "$G0" ]; check "menu: and on again goes back to the thin border ($G)" $?
+stop_wm; stop_clients
+export TIEWM_CONFIG="$TMP/none.conf"; start_wm
+newwin ub0 -t "Default: no border" -w 300 -h 200 -c cc9900 -s 300 -p 400,300 -D none
+xprop -id "$LAST_ID" _NET_FRAME_EXTENTS | grep -q "= 0, 0, 0, 0"; check "with the default (undecorated_border = 0) nothing changes: no border at all" $?
+stop_clients
+
 stop_wm
 
 echo
