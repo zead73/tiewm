@@ -157,6 +157,7 @@ type
     function PointerMonitor: Integer;
     procedure OnScreenChange(var Ev: TXEvent);
     procedure MoveToMonitor(C: TClient; Dir: Integer);
+    procedure MoveToMonitorIndex(C: TClient; Dst: Integer);
     procedure OnEnter(var Ev: TXCrossingEvent);
     procedure PollFocusFollow;
     function FindClient(Win: TWindow): TClient;
@@ -2153,6 +2154,7 @@ const
   mnSticky = 5;
   mnClose = 6;
   mnDesktop = 100;     { + 0-based desktop }
+  mnMonitor = 200;     { + 0-based monitor }
 
 procedure TWM.OpenWindowMenu(C: TClient; X, Y: Integer; ATime: culong);
 var
@@ -2173,6 +2175,12 @@ begin
   FMenu.AddSeparator;
   for K := 0 to FNumDesk - 1 do
     FMenu.Add(mnDesktop + K, 'Move to Workspace ' + IntToStr(K + 1), C.Desktop = K, C.Desktop <> K);
+  if Length(FMon) > 1 then
+  begin
+    FMenu.AddSeparator;
+    for K := 0 to High(FMon) do
+      FMenu.Add(mnMonitor + K, 'Move to Monitor ' + IntToStr(K + 1), MonitorOf(C) = K, (MonitorOf(C) <> K) and not C.Iconic);
+  end;
   FMenu.AddSeparator;
   FMenu.Add(mnClose, 'Close', False, True);
   FMenuClient := C;
@@ -2208,7 +2216,8 @@ begin
     if C.Desktop < 0 then MoveToDesktop(C, FCurDesk) else MoveToDesktop(C, -1);
   end
   else if Id = mnClose then CloseClient(C)
-  else if (Id >= mnDesktop) and (Id < mnDesktop + FNumDesk) then MoveToDesktop(C, Id - mnDesktop);
+  else if (Id >= mnDesktop) and (Id < mnDesktop + FNumDesk) then MoveToDesktop(C, Id - mnDesktop)
+  else if (Id >= mnMonitor) and (Id < mnMonitor + Length(FMon)) then MoveToMonitorIndex(C, Id - mnMonitor);
 end;
 
 { ---- keyboard: Alt+F4, Alt+Tab cycling, Super+Return, Alt+F9, Alt+F11 ---- }
@@ -3176,13 +3185,17 @@ end;
 { Moves a window to the monitor on its right (Dir = 1) or left, keeping its place relative to the
   monitor's corner; maximized and fullscreen windows refit to the new monitor. }
 procedure TWM.MoveToMonitor(C: TClient; Dir: Integer);
+begin
+  MoveToMonitorIndex(C, MonitorOf(C) + Dir);    { monitors are ordered left to right; no wrapping round }
+end;
+
+procedure TWM.MoveToMonitorIndex(C: TClient; Dst: Integer);
 var
-  Src, Dst, AX, AY, AW, AH, NX, NY, NW, NH: Integer;
+  Src, AX, AY, AW, AH, NX, NY, NW, NH: Integer;
 begin
   if (Length(FMon) < 2) or C.Iconic then Exit;
   Src := MonitorOf(C);
-  Dst := Src + Dir;                       { monitors are ordered left to right; no wrapping round }
-  if (Dst < 0) or (Dst >= Length(FMon)) then Exit;
+  if (Dst < 0) or (Dst >= Length(FMon)) or (Dst = Src) then Exit;
   if C.Fullscreen then
   begin
     C.X := FMon[Dst].X; C.Y := FMon[Dst].Y; C.W := FMon[Dst].W; C.H := FMon[Dst].H;

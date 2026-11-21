@@ -1146,6 +1146,10 @@ G=$(absgeom "$MV"); [ "$(field "$G" x)" -eq $((X0+1280)) ]; RC=$?; check "Right 
 G=$(absgeom "$MV"); [ "$(field "$G" x)" -eq "$X0" ]; RC=$?; check "Super+Shift+Left moves it back to the left monitor ($G)" $RC
 "$XDO" keydown Super_L keydown Shift_L key Left keyup Shift_L keyup Super_L; sec 0.6
 G=$(absgeom "$MV"); [ "$(field "$G" x)" -eq "$X0" ]; RC=$?; check "Left again on the left-most monitor does nothing ($G)" $RC
+"$XDO" keydown Alt_L key space keyup Alt_L; sec 0.5; "$XDO" key Down key Down key Down key Down key Down key Down key Down key Down key Down key Down key Down key Down key Return; sec 0.8
+G=$(absgeom "$MV"); [ "$(field "$G" x)" -eq $((X0+1280)) ]; RC=$?; check "window menu: \"Move to Monitor 2\" (12th enabled item) moves it there ($G)" $RC
+"$XDO" keydown Alt_L key space keyup Alt_L; sec 0.5; "$XDO" key Down key Down key Down key Down key Down key Down key Down key Down key Down key Down key Down key Down key Return; sec 0.8
+G=$(absgeom "$MV"); [ "$(field "$G" x)" -eq "$X0" ]; RC=$?; check "window menu: \"Move to Monitor 1\" brings it back (its own monitor's entry is disabled, so it is the 12th enabled item again) ($G)" $RC
 "$XDO" keydown Super_L keydown Shift_L key Right keyup Shift_L keyup Super_L; sec 0.6
 "$XDO" keydown Super_L key Return keyup Super_L; sec 0.6
 "$XDO" keydown Super_L keydown Shift_L key Left keyup Shift_L keyup Super_L; sec 0.6
