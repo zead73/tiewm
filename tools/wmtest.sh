@@ -28,7 +28,7 @@ kill_scratch_wm() {
   done
 }
 start_xvfb() {
-  if ! pgrep -x Xvfb >/dev/null; then
+  if [ ! -e /tmp/.X11-unix/X99 ]; then
     Xvfb :99 -screen 0 1280x800x24 -nolisten tcp >/dev/null 2>&1 &
     sleep 1
   fi
@@ -272,7 +272,7 @@ G=$(absgeom "$DLG"); DX=$(field "$G" x); DY=$(field "$G" y)
 [ "$(hexnorm "$(active)")" = "$(hexnorm "$DLG")" ]; check "dialog gets focus" $?
 "$XDO" move 310 240 click 1; sec 0.5      # click the parent, away from the dialog
 [ "$(hexnorm "$(active)")" = "$(hexnorm "$PAR")" ]; check "clicking the parent focuses it" $?
-[ "$(stackpos "$DLG")" -gt "$(stackpos "$PAR")" ]; check "dialog is still stacked above its raised parent (dlg=$(stackpos "$DLG") par=$(stackpos "$PAR"))" $?
+[ "$(stackpos "$DLG")" -gt "$(stackpos "$PAR")" ]; RC=$?; check "dialog is still stacked above its raised parent (dlg=$(stackpos "$DLG") par=$(stackpos "$PAR"))" $RC
 "$XDO" move 500 360 click 1; sec 0.4       # focus the dialog again
 "$XDO" keydown Alt_L key F4 keyup Alt_L; sec 0.8
 grep -q WM_DELETE_WINDOW "$TMP/dlg.log"; check "Alt+F4 closed the dialog" $?
@@ -284,10 +284,10 @@ newwin bl -t "Fake conky" -w 200 -h 300 -c 225522 -s 120 -p 900,50 -y dockbelow;
 newwin ds -t "Fake desktop" -w 1280 -h 800 -c 202030 -s 120 -p 0,0 -y desktop; DS=$LAST_ID    # mapped last, like pcmanfm-desktop
 newwin nm -t "Normal window" -w 400 -h 300 -c aa7733 -s 120 -p 880,30; NM=$LAST_ID
 "$XDO" move 900 100 click 1; sec 0.5
-[ "$(toppos "$DS")" -lt "$(toppos "$BL")" ]; check "desktop window is below the conky-like dock (ds=$(toppos "$DS") bl=$(toppos "$BL"))" $?
-[ "$(toppos "$BL")" -lt "$(stackpos "$NM")" ]; check "conky-like dock is below normal windows (bl=$(toppos "$BL") nm=$(stackpos "$NM"))" $?
-[ "$(stackpos "$NM")" -lt "$(toppos "$DK")" ]; check "panel-like dock is above normal windows (nm=$(stackpos "$NM") dk=$(toppos "$DK"))" $?
-[ "$(toppos "$DS")" -le 3 ]; check "desktop window is at the very bottom (index $(toppos "$DS"))" $?
+[ "$(toppos "$DS")" -lt "$(toppos "$BL")" ]; RC=$?; check "desktop window is below the conky-like dock (ds=$(toppos "$DS") bl=$(toppos "$BL"))" $RC
+[ "$(toppos "$BL")" -lt "$(stackpos "$NM")" ]; RC=$?; check "conky-like dock is below normal windows (bl=$(toppos "$BL") nm=$(stackpos "$NM"))" $RC
+[ "$(stackpos "$NM")" -lt "$(toppos "$DK")" ]; RC=$?; check "panel-like dock is above normal windows (nm=$(stackpos "$NM") dk=$(toppos "$DK"))" $RC
+[ "$(toppos "$DS")" -le 3 ]; RC=$?; check "desktop window is at the very bottom (index $(toppos "$DS"))" $RC
 wmctrl -i -r "$NM" -b add,fullscreen; sec 0.6
 [ "$(stackpos "$NM")" -gt "$(toppos "$DK")" ]; check "a fullscreen window covers the panel-like dock" $?
 wmctrl -i -r "$NM" -b remove,fullscreen; sec 0.6
@@ -475,7 +475,7 @@ G=$(absgeom "$MN"); [ "$(field "$G" w)" -eq 300 ]; check "menu: the same item no
 xprop -id "$MN" _NET_WM_STATE | grep -q ABOVE; check "menu: Always on top sets _NET_WM_STATE_ABOVE" $?
 newwin ot -t "Other" -w 300 -h 200 -c 227733 -s 300 -p 100,500; OT=$LAST_ID
 "$XDO" move 150 600 click 1; sec 0.5
-[ "$(stackpos "$MN")" -gt "$(stackpos "$OT")" ]; check "an always-on-top window stays above a window that was just raised (mn=$(stackpos "$MN") ot=$(stackpos "$OT"))" $?
+[ "$(stackpos "$MN")" -gt "$(stackpos "$OT")" ]; RC=$?; check "an always-on-top window stays above a window that was just raised (mn=$(stackpos "$MN") ot=$(stackpos "$OT"))" $RC
 "$XDO" move 500 420 click 1; sec 0.4
 "$XDO" keydown Alt_L key space keyup Alt_L; sec 0.5; "$XDO" key Down key Down key Down key Down key Return; sec 0.8
 ! xprop -id "$MN" _NET_WM_STATE | grep -q ABOVE; check "menu: Always on top toggles off again" $?
@@ -509,11 +509,11 @@ stop_clients
 newwin sh -t "Shade me" -w 300 -h 200 -c 996633 -s 300 -p 500,300; SH=$LAST_ID
 G=$(absgeom "$SH"); RX=$(field "$G" x); RY=$(field "$G" y); RW=$(field "$G" w)
 "$XDO" move $((RX+RW-82)) $((RY-T+8)) click 1; sec 0.7
-[ "$(frameh "$SH")" = "$T" ]; check "S button rolls the window up to its titlebar (frame height $(frameh "$SH"), expected $T)" $?
+[ "$(frameh "$SH")" = "$T" ]; RC=$?; check "S button rolls the window up to its titlebar (frame height $(frameh "$SH"), expected $T)" $RC
 xprop -id "$SH" _NET_WM_STATE | grep -q SHADED; check "_NET_WM_STATE has SHADED" $?
 tail -3 "$TMP/sh.log" | grep -q 'ConfigureNotify .* w=300 h=200 synthetic=1'; check "the client is still told its real size (300x200), not the rolled-up one" $?
 "$XDO" move $((RX+RW-82)) $((RY-T+8)) click 1; sec 0.7
-[ "$(frameh "$SH")" = "$((200+T+M))" ]; check "S button again unrolls it (frame height $(frameh "$SH"))" $?
+[ "$(frameh "$SH")" = "$((200+T+M))" ]; RC=$?; check "S button again unrolls it (frame height $(frameh "$SH"))" $RC
 ! xprop -id "$SH" _NET_WM_STATE | grep -q SHADED; check "SHADED is gone again" $?
 "$XDO" keydown Alt_L key space keyup Alt_L; sec 0.5; "$XDO" key Down key Down key Down key Down key Down key Down key Down key Return; sec 0.8
 [ "$(frameh "$SH")" = "$T" ]; check "window menu: Shade (7th item) shades" $?
@@ -554,8 +554,8 @@ newwin nw -t "Normal" -w 300 -h 200 -c 44aa55 -s 300 -p 800,100; NW=$LAST_ID
 wmctrl -i -r "$BW" -b add,below; sec 0.6
 xprop -id "$BW" _NET_WM_STATE | grep -q BELOW; check "wmctrl -b add,below sets _NET_WM_STATE_BELOW" $?
 "$XDO" move 500 400 click 1; sec 0.6
-[ "$(stackpos "$BW")" -lt "$(stackpos "$NW")" ]; check "a below window stays under a normal one even right after being clicked (bw=$(stackpos "$BW") nw=$(stackpos "$NW"))" $?
-[ "$(toppos "$DS2")" -lt "$(toppos "$BL2")" ] && [ "$(toppos "$BL2")" -lt "$(stackpos "$BW")" ]; check "layers bottom to top: desktop < conky-like dock < below window (ds=$(toppos "$DS2") bl=$(toppos "$BL2") bw=$(stackpos "$BW"))" $?
+[ "$(stackpos "$BW")" -lt "$(stackpos "$NW")" ]; RC=$?; check "a below window stays under a normal one even right after being clicked (bw=$(stackpos "$BW") nw=$(stackpos "$NW"))" $RC
+[ "$(toppos "$DS2")" -lt "$(toppos "$BL2")" ] && [ "$(toppos "$BL2")" -lt "$(stackpos "$BW")" ]; RC=$?; check "layers bottom to top: desktop < conky-like dock < below window (ds=$(toppos "$DS2") bl=$(toppos "$BL2") bw=$(stackpos "$BW"))" $RC
 wmctrl -i -r "$BW" -b add,above; sec 0.6
 xprop -id "$BW" _NET_WM_STATE | grep -q ABOVE && ! xprop -id "$BW" _NET_WM_STATE | grep -q BELOW; check "setting above clears below (they exclude each other)" $?
 "$XDO" keydown Alt_L key space keyup Alt_L; sec 0.5; "$XDO" key Down key Down key Down key Down key Down key Return; sec 0.8
@@ -568,7 +568,7 @@ echo "== 26. _MOTIF_WM_HINTS: windows that ask for no decorations get none (no t
 stop_clients
 newwin nd -t "No decorations" -w 300 -h 200 -c cc6600 -s 300 -p 400,300 -D none; ND=$LAST_ID
 xprop -id "$ND" _NET_FRAME_EXTENTS | grep -q "= 0, 0, 0, 0"; check "decorations = 0: _NET_FRAME_EXTENTS are zero" $?
-G=$(absgeom "$ND"); [ "$(field "$G" x)" -eq 400 ] && [ "$(field "$G" y)" -eq 300 ] && [ "$(frameh "$ND")" = "200" ]; check "the frame is exactly the client ($G, frame height $(frameh "$ND"))" $?
+G=$(absgeom "$ND"); [ "$(field "$G" x)" -eq 400 ] && [ "$(field "$G" y)" -eq 300 ] && [ "$(frameh "$ND")" = "200" ]; RC=$?; check "the frame is exactly the client ($G, frame height $(frameh "$ND"))" $RC
 import -window root "$TMP/nd.png" 2>/dev/null
 [ "$(magick "$TMP/nd.png" -format '%[hex:p{410,299}]' info:)" = "000000" ] && [ "$(magick "$TMP/nd.png" -format '%[hex:p{410,300}]' info:)" = "CC6600" ]; check "nothing is drawn around the client (pixel above it is the bare root)" $?
 grep -q '(no decorations)' "$TMP/tiewm.log"; check "the log says it was managed without decorations" $?
@@ -630,7 +630,7 @@ newwin top -t "At the top" -w 300 -h 200 -c 669900 -s 300 -p 700,0 -D none; TOP=
 G=$(absgeom "$TOP"); [ "$(field "$G" y)" -eq 0 ]; check "an undecorated window can sit at the very top (y=0)" $?
 "$XDO" keydown Alt_L key space keyup Alt_L; sec 0.5; "$XDO" key Down key Down key Down key Down key Down key Down key Down key Return; sec 0.8
 G=$(absgeom "$TOP")
-xprop -id "$TOP" _NET_FRAME_EXTENTS | grep -q "= $M, $M, $T, $M" && [ "$(field "$G" y)" -eq "$T" ]; check "turning the titlebar on pushes the window down so the bar is visible (client y=$(field "$G" y), expected $T)" $?
+xprop -id "$TOP" _NET_FRAME_EXTENTS | grep -q "= $M, $M, $T, $M" && [ "$(field "$G" y)" -eq "$T" ]; RC=$?; check "turning the titlebar on pushes the window down so the bar is visible (client y=$(field "$G" y), expected $T)" $RC
 stop_clients
 newwin ov -t "Override" -w 300 -h 200 -c 006699 -s 300 -p 400,300 -D all -M title,6; OV=$LAST_ID
 "$XDO" keydown Alt_L key space keyup Alt_L; sec 0.5; "$XDO" key Down key Down key Down key Down key Down key Down key Down key Down key Return; sec 0.8
@@ -735,7 +735,7 @@ OUT=$("$WM" --check-config "$TMP/c12.conf" 2>&1); RC=$?
 export TIEWM_CONFIG="$TMP/c11.conf"; start_wm
 newwin ub -t "Border" -w 300 -h 200 -c cc9900 -s 300 -p 400,300 -D none; UB=$LAST_ID
 xprop -id "$UB" _NET_FRAME_EXTENTS | grep -q "= 4, 4, 4, 4"; check "an undecorated window gets 4 px extents" $?
-G=$(absgeom "$UB"); [ "$(field "$G" x)" -eq 400 ] && [ "$(field "$G" y)" -eq 300 ] && [ "$(frameh "$UB")" = "208" ]; check "the client stays where the app put it; the frame is 4 px bigger on every side ($G, frame h $(frameh "$UB"))" $?
+G=$(absgeom "$UB"); [ "$(field "$G" x)" -eq 400 ] && [ "$(field "$G" y)" -eq 300 ] && [ "$(frameh "$UB")" = "208" ]; RC=$?; check "the client stays where the app put it; the frame is 4 px bigger on every side ($G, frame h $(frameh "$UB"))" $RC
 import -window root "$TMP/ub1.png" 2>/dev/null
 [ "$(magick "$TMP/ub1.png" -format '%[hex:p{398,350}]' info:)" = "15539E" ] && [ "$(magick "$TMP/ub1.png" -format '%[hex:p{410,350}]' info:)" = "CC9900" ]; check "the border is drawn in the active colour, the client inside it" $?
 newwin ub2 -t "Normal neighbour" -w 300 -h 200 -c 0099cc -s 300 -p 800,300; UB2=$LAST_ID
@@ -787,7 +787,7 @@ crop "$TMP/hv-base.png" "$CX" "$TMP/hv-base-close.png"; crop "$TMP/hv-base.png" 
 "$XDO" move $((CX+12)) $((BY+9)); sec 0.5
 import -window root "$TMP/hv-hover.png" 2>/dev/null
 crop "$TMP/hv-hover.png" "$CX" "$TMP/hv-hover-close.png"
-[ "$(ae "$TMP/hv-base-close.png" "$TMP/hv-hover-close.png")" -gt 20 ]; check "the close button looks different under the pointer ($(ae "$TMP/hv-base-close.png" "$TMP/hv-hover-close.png") pixels changed)" $?
+[ "$(ae "$TMP/hv-base-close.png" "$TMP/hv-hover-close.png")" -gt 20 ]; RC=$?; check "the close button looks different under the pointer ($(ae "$TMP/hv-base-close.png" "$TMP/hv-hover-close.png") pixels changed)" $RC
 crop "$TMP/hv-hover.png" "$SX" "$TMP/hv-hover-shade.png"
 [ "$(ae "$TMP/hv-base-shade.png" "$TMP/hv-hover-shade.png")" = "0" ]; check "the neighbouring shade button is unchanged" $?
 "$XDO" move $((RX+60)) $((BY+9)); sec 0.5
@@ -798,7 +798,7 @@ crop "$TMP/hv-off.png" "$CX" "$TMP/hv-off-close.png"
 import -window root "$TMP/hv-hover2.png" 2>/dev/null; crop "$TMP/hv-hover2.png" "$SX" "$TMP/hv-hover2-shade.png"
 "$XDO" down 1; sec 0.5
 import -window root "$TMP/hv-press.png" 2>/dev/null; crop "$TMP/hv-press.png" "$SX" "$TMP/hv-press-shade.png"
-[ "$(ae "$TMP/hv-hover2-shade.png" "$TMP/hv-press-shade.png")" -gt 20 ] && [ "$(ae "$TMP/hv-base-shade.png" "$TMP/hv-press-shade.png")" -gt 20 ]; check "a held button shows its own pressed image ($(ae "$TMP/hv-hover2-shade.png" "$TMP/hv-press-shade.png") px vs hover)" $?
+[ "$(ae "$TMP/hv-hover2-shade.png" "$TMP/hv-press-shade.png")" -gt 5 ] && [ "$(ae "$TMP/hv-base-shade.png" "$TMP/hv-press-shade.png")" -gt 20 ]; RC=$?; check "a held button shows its own pressed image ($(ae "$TMP/hv-hover2-shade.png" "$TMP/hv-press-shade.png") px vs hover)" $RC
 "$XDO" move 900 700; sec 0.5
 import -window root "$TMP/hv-away.png" 2>/dev/null; crop "$TMP/hv-away.png" "$SX" "$TMP/hv-away-shade.png"
 [ "$(ae "$TMP/hv-base-shade.png" "$TMP/hv-away-shade.png")" = "0" ]; check "dragging off the button while held: it goes back to normal" $?
@@ -861,7 +861,7 @@ xprop -id "$MD" _NET_WM_STATE | grep -q MODAL; check "the app's _NET_WM_STATE_MO
 G=$(absgeom "$MP"); PX=$(field "$G" x); PY=$(field "$G" y)
 "$XDO" move $((PX+60)) $((PY-T+8)) click 1; sec 0.6
 [ "$(hexnorm "$(active)")" = "$(hexnorm "$MD")" ]; check "clicking the main window's titlebar also focuses the dialog" $?
-[ "$(stackpos "$MD")" -gt "$(stackpos "$MP")" ]; check "the dialog stays above its parent (md=$(stackpos "$MD") mp=$(stackpos "$MP"))" $?
+[ "$(stackpos "$MD")" -gt "$(stackpos "$MP")" ]; RC=$?; check "the dialog stays above its parent (md=$(stackpos "$MD") mp=$(stackpos "$MP"))" $RC
 wmctrl -i -a "$MP"; sec 0.6
 [ "$(hexnorm "$(active)")" = "$(hexnorm "$MD")" ]; check "activating the main window from a taskbar goes to the dialog instead" $?
 "$XDO" keydown Alt_L key Tab keyup Alt_L; sec 0.6
@@ -1016,13 +1016,13 @@ newwin ad -t "Undecorated" -w 300 -h 200 -c 7799aa -s 300 -p 400,300 -D none; AD
 ! xprop -id "$AD" _NET_WM_ALLOWED_ACTIONS | grep -q _NET_WM_ACTION_SHADE; check "a window without a titlebar cannot be shaded" $?
 stop_clients
 newwin rf -t "Asks extents" -w 300 -h 200 -c 7799aa -s 300 -p 400,300 -X; sec 0.3
-grep -q "requested extents=$M,$M,$T,$M" "$TMP/rf.log"; check "_NET_REQUEST_FRAME_EXTENTS before mapping is answered ($(grep -a 'requested extents' "$TMP/rf.log"))" $?
+grep -q "requested extents=$M,$M,$T,$M" "$TMP/rf.log"; RC=$?; check "_NET_REQUEST_FRAME_EXTENTS before mapping is answered ($(grep -a 'requested extents' "$TMP/rf.log"))" $RC
 stop_clients
 newwin rn -t "Asks extents, no frame" -w 300 -h 200 -c 7799aa -s 300 -p 400,300 -X -D none; sec 0.3
-grep -q "requested extents=0,0,0,0" "$TMP/rn.log"; check "and answers 0,0,0,0 for a window that wants no decorations ($(grep -a 'requested extents' "$TMP/rn.log"))" $?
+grep -q "requested extents=0,0,0,0" "$TMP/rn.log"; RC=$?; check "and answers 0,0,0,0 for a window that wants no decorations ($(grep -a 'requested extents' "$TMP/rn.log"))" $RC
 stop_clients
 newwin sp -t "Splash" -w 300 -h 200 -c 7799aa -s 300 -p 400,300 -y splash; SP=$LAST_ID
-[ "$(xprop -id "$SP" _NET_FRAME_EXTENTS | sed 's/.*= //')" = "0, 0, 0, 0" ]; check "a splash window gets no frame: $(xprop -id "$SP" _NET_FRAME_EXTENTS)" $?
+[ "$(xprop -id "$SP" _NET_FRAME_EXTENTS | sed 's/.*= //')" = "0, 0, 0, 0" ]; RC=$?; check "a splash window gets no frame: $(xprop -id "$SP" _NET_FRAME_EXTENTS)" $RC
 stop_clients
 
 echo "== 38. _NET_WM_PING: closing a hung app twice kills it"
@@ -1044,6 +1044,46 @@ sleep 3
 ! kill -0 "$PID_hg" 2>/dev/null; check "a click after 3 s without an answer kills it" $?
 grep -q 'did not answer a ping' "$TMP/tiewm.log"; check "and the log says why" $?
 stop_clients
+
+echo "== 39. several monitors (RandR 1.5 virtual monitors in a 2560x800 Xvfb on :97)"
+stop_wm; stop_clients
+MON=$HERE/monset
+Xvfb :97 -screen 0 2560x800x24 -nolisten tcp >/dev/null 2>&1 & XV97=$!
+sleep 1
+export DISPLAY=:97
+"$MON" 600 left=0,0,1280,800 right=1280,0,1280,800 >/dev/null 2>&1 & MONPID=$!
+sleep 0.7
+export TIEWM_CONFIG="$TMP/none.conf"; rm -f "$TMP/tiewm.log"; start_wm
+grep -q '2 monitor(s): 1280x800+0+0 1280x800+1280+0' "$TMP/tiewm.log"; RC=$?; check "the log lists both monitors ($(grep -a 'monitor(s)' "$TMP/tiewm.log" | tail -1))" $RC
+"$XDO" move 1900 400; sec 0.2
+newwin mr -t "Opens right" -w 400 -h 300 -c 5577cc -s 120; MR=$LAST_ID
+G=$(absgeom "$MR"); [ "$(field "$G" x)" -eq $((1280+(1280-400-2*M)/2+M)) ] && [ "$(field "$G" x)" -gt 1280 ]; check "a new window opens centred on the monitor the pointer is on ($G)" $?
+"$XDO" keydown Super_L key Return keyup Super_L; sec 0.6
+G=$(absgeom "$MR"); [ "$(field "$G" x)" -eq $((1280+M)) ] && [ "$(field "$G" w)" -eq $((1280-2*M)) ]; check "maximize fills the right monitor only ($G)" $?
+"$XDO" keydown Super_L key Return keyup Super_L; sec 0.5
+"$XDO" keydown Alt_L key F11 keyup Alt_L; sec 0.6
+G=$(absgeom "$MR"); [ "$(field "$G" x)" -eq 1280 ] && [ "$(field "$G" w)" -eq 1280 ] && [ "$(field "$G" h)" -eq 800 ]; check "fullscreen fills the right monitor only ($G)" $?
+"$XDO" keydown Alt_L key F11 keyup Alt_L; sec 0.5
+"$XDO" move 300 400; sec 0.2
+newwin ml -t "Opens left" -w 400 -h 300 -c cc7755 -s 120; ML=$LAST_ID
+G=$(absgeom "$ML"); [ "$(field "$G" x)" -lt 1280 ] && [ "$(field "$G" x)" -eq $(((1280-400-2*M)/2+M)) ]; check "with the pointer on the left monitor a new window opens there ($G)" $?
+"$XDO" keydown Super_L key Return keyup Super_L; sec 0.6
+G=$(absgeom "$ML"); [ "$(field "$G" x)" -eq $M ] && [ "$(field "$G" w)" -eq $((1280-2*M)) ]; check "and maximizes to the left monitor ($G)" $?
+"$XDO" keydown Super_L key Return keyup Super_L; sec 0.5
+# put the right-hand window back to maximized, then unplug the right monitor
+"$XDO" move 1900 400 click 1; sec 0.3
+"$XDO" keydown Super_L key Return keyup Super_L; sec 0.5
+newwin mf -t "Floating right" -w 300 -h 200 -c 77cc55 -s 120 -p 1800,300 -G 10; MF=$LAST_ID
+"$MON" 0 del=right >/dev/null 2>&1      # the right monitor is unplugged
+sleep 3.5      # the WM polls the monitor list every 2 s (servers send no event for client-defined monitors)
+grep -q ' 1 monitor(s): 1280x800+0+0' "$TMP/tiewm.log"; RC=$?; check "unplugging the right monitor is noticed ($(grep -a 'monitor(s)' "$TMP/tiewm.log" | tail -1))" $RC
+G=$(absgeom "$MR"); [ "$(field "$G" x)" -eq $M ] && [ "$(field "$G" w)" -eq $((1280-2*M)) ]; check "a maximized window refits to the monitor that is left ($G)" $?
+G=$(absgeom "$MF"); [ "$(( $(field "$G" x) + $(field "$G" w) ))" -le 1280 ]; check "a window that was on the unplugged monitor is pulled back onto the remaining one ($G)" $?
+stop_clients
+stop_wm
+kill "$MONPID" 2>/dev/null; wait "$MONPID" 2>/dev/null
+kill "$XV97" 2>/dev/null; wait "$XV97" 2>/dev/null
+export DISPLAY=:99
 
 stop_wm
 

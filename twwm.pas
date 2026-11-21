@@ -13,7 +13,7 @@ interface
 
 uses
   ctypes, SysUtils, StrUtils, Classes, BaseUnix, x, xlib, xutil, xatom, cursorfont, keysym,
-  twimage, twtheme, twxft, twxdraw, twxshape, twconfig, twlog, twmenu;
+  twimage, twtheme, twxft, twxdraw, twxshape, twxrandr, twconfig, twlog, twmenu;
 
 type
   TClient = class
@@ -49,6 +49,7 @@ type
   TDock = record
     Win: TWindow;
     Left, Right, Top, Bottom: Integer;
+    LeftY0, LeftY1, RightY0, RightY1, TopX0, TopX1, BotX0, BotX1: Integer;   { _NET_WM_STRUT_PARTIAL ranges }
     Below: Boolean;      { _NET_WM_STATE_BELOW, e.g. conky: stays under normal windows }
   end;
 
@@ -67,6 +68,9 @@ type
     FScr: Integer;
     FRoot: TWindow;
     FScrW, FScrH: Integer;
+    FMon: TMonitorList;     { the monitors, left to right }
+    FLastPoll: Int64;
+    FRandrBase: Integer;    { RandR event base, -1 = no RandR }
     FTheme: TXfwmTheme;
     FFont: TTitleFont;
     FOpts: TFrameOpts;
@@ -136,6 +140,16 @@ type
     procedure ReadStruts(var D: TDock);
     procedure UpdateWorkarea;
     procedure WorkArea(out AX, AY, AW, AH: Integer);
+    procedure WorkAreaOf(M: Integer; out AX, AY, AW, AH: Integer);
+    procedure RefreshMonitors;
+    procedure LogMonitors;
+    procedure ApplyScreenChange;
+    procedure PollMonitors;
+    function MonitorAt(PX, PY: Integer): Integer;
+    function InsideAnyMonitor(PX, PY: Integer): Boolean;
+    function MonitorOf(C: TClient): Integer;
+    function PointerMonitor: Integer;
+    procedure OnScreenChange(var Ev: TXEvent);
     function FindClient(Win: TWindow): TClient;
     function FindFrame(Frame: TWindow): TClient;
     procedure Manage(Win: TWindow; Startup: Boolean);
@@ -323,6 +337,11 @@ begin
   FRoot := DefaultRootWindow(FDpy);
   FScrW := DisplayWidth(FDpy, FScr);
   FScrH := DisplayHeight(FDpy, FScr);
+  FRandrBase := -1;
+  if HaveRandR(FDpy, FRandrBase) then XRRSelectInput(FDpy, FRoot, RRScreenChangeNotifyMask or RRCrtcChangeNotifyMask or RROutputChangeNotifyMask)
+  else FRandrBase := -1;
+  RefreshMonitors;
+  LogMonitors;
   FDebug := GetEnvironmentVariable('TIEWM_DEBUG') <> '';
   FNumDesk := FCfg.NumDesktops;
   if FNumDesk < 1 then FNumDesk := 1;
@@ -713,6 +732,8 @@ var
   N: culong;
 begin
   D.Left := 0; D.Right := 0; D.Top := 0; D.Bottom := 0;
+  D.LeftY0 := 0; D.LeftY1 := MaxInt; D.RightY0 := 0; D.RightY1 := MaxInt;
+  D.TopX0 := 0; D.TopX1 := MaxInt; D.BotX0 := 0; D.BotX1 := MaxInt;
   Data := GetProp(D.Win, aStrutPartial, XA_CARDINAL, N);
   if (Data = nil) or (N < 4) then
   begin
@@ -725,23 +746,128 @@ begin
     D.Right := PCULong(Data)[1];
     D.Top := PCULong(Data)[2];
     D.Bottom := PCULong(Data)[3];
+    if N >= 12 then
+    begin
+      D.LeftY0 := PCULong(Data)[4]; D.LeftY1 := PCULong(Data)[5];
+      D.RightY0 := PCULong(Data)[6]; D.RightY1 := PCULong(Data)[7];
+      D.TopX0 := PCULong(Data)[8]; D.TopX1 := PCULong(Data)[9];
+      D.BotX0 := PCULong(Data)[10]; D.BotX1 := PCULong(Data)[11];
+    end;
   end;
   if Data <> nil then XFree(Data);
 end;
 
-procedure TWM.WorkArea(out AX, AY, AW, AH: Integer);
-var
-  I, L, R, T, B: Integer;
+{ ---- monitors ---- }
+
+procedure TWM.RefreshMonitors;
 begin
-  L := 0; R := 0; T := 0; B := 0;
+  FMon := nil;
+  if FRandrBase >= 0 then FMon := QueryMonitors(FDpy, FRoot);
+  if Length(FMon) = 0 then
+  begin
+    SetLength(FMon, 1);
+    FMon[0].X := 0; FMon[0].Y := 0; FMon[0].W := FScrW; FMon[0].H := FScrH; FMon[0].Primary := True;
+  end;
+end;
+
+procedure TWM.LogMonitors;
+var
+  I: Integer;
+  S: string;
+begin
+  S := '';
+  for I := 0 to High(FMon) do
+    S := S + Format(' %dx%d+%d+%d', [FMon[I].W, FMon[I].H, FMon[I].X, FMon[I].Y]);
+  Log(Format('screen %dx%d, %d monitor(s):%s', [FScrW, FScrH, Length(FMon), S]));
+end;
+
+function TWM.InsideAnyMonitor(PX, PY: Integer): Boolean;
+var
+  I: Integer;
+begin
+  for I := 0 to High(FMon) do
+    if (PX >= FMon[I].X) and (PX < FMon[I].X + FMon[I].W) and (PY >= FMon[I].Y) and (PY < FMon[I].Y + FMon[I].H) then
+      Exit(True);
+  Result := False;
+end;
+
+{ the monitor containing the point, else the nearest one }
+function TWM.MonitorAt(PX, PY: Integer): Integer;
+var
+  I, DX, DY, D, Best: Integer;
+begin
+  Result := 0;
+  Best := MaxInt;
+  for I := 0 to High(FMon) do
+  begin
+    DX := 0; DY := 0;
+    if PX < FMon[I].X then DX := FMon[I].X - PX
+    else if PX >= FMon[I].X + FMon[I].W then DX := PX - (FMon[I].X + FMon[I].W - 1);
+    if PY < FMon[I].Y then DY := FMon[I].Y - PY
+    else if PY >= FMon[I].Y + FMon[I].H then DY := PY - (FMon[I].Y + FMon[I].H - 1);
+    D := DX * DX + DY * DY;
+    if D < Best then begin Best := D; Result := I; end;
+  end;
+end;
+
+function TWM.MonitorOf(C: TClient): Integer;
+begin
+  Result := MonitorAt(C.X + C.W div 2, C.Y + C.H div 2);
+end;
+
+function TWM.PointerMonitor: Integer;
+var
+  Rw, Cw: TWindow;
+  Rx, Ry, Wx, Wy: cint;
+  Mask: cuint;
+begin
+  Result := 0;
+  if XQueryPointer(FDpy, FRoot, @Rw, @Cw, @Rx, @Ry, @Wx, @Wy, @Mask) then Result := MonitorAt(Rx, Ry);
+end;
+
+{ the area of monitor M that docks leave free: a strut reserves a band along a screen edge
+  (over the range its partial strut names), and counts for M where that band reaches into it }
+procedure TWM.WorkAreaOf(M: Integer; out AX, AY, AW, AH: Integer);
+var
+  I, L, R, T, B, V, MR, MB: Integer;
+  Mn: TMonitor;
+begin
+  Mn := FMon[M];
+  MR := Mn.X + Mn.W;
+  MB := Mn.Y + Mn.H;
+  L := Mn.X; R := MR; T := Mn.Y; B := MB;
   for I := 0 to High(FDocks) do
   begin
-    if FDocks[I].Left > L then L := FDocks[I].Left;
-    if FDocks[I].Right > R then R := FDocks[I].Right;
-    if FDocks[I].Top > T then T := FDocks[I].Top;
-    if FDocks[I].Bottom > B then B := FDocks[I].Bottom;
+    with FDocks[I] do
+    begin
+      if (Left > 0) and (LeftY0 < MB) and (LeftY1 >= Mn.Y) then begin V := Left; if V > L then L := V; end;
+      if (Right > 0) and (RightY0 < MB) and (RightY1 >= Mn.Y) then begin V := FScrW - Right; if V < R then R := V; end;
+      if (Top > 0) and (TopX0 < MR) and (TopX1 >= Mn.X) then begin V := Top; if V > T then T := V; end;
+      if (Bottom > 0) and (BotX0 < MR) and (BotX1 >= Mn.X) then begin V := FScrH - Bottom; if V < B then B := V; end;
+    end;
   end;
-  AX := L; AY := T; AW := FScrW - L - R; AH := FScrH - T - B;
+  if L > MR - 1 then L := MR - 1;
+  if T > MB - 1 then T := MB - 1;
+  if R < L + 1 then R := L + 1;
+  if B < T + 1 then B := T + 1;
+  AX := L; AY := T; AW := R - L; AH := B - T;
+end;
+
+{ the work area of the whole desktop: the box around every monitor's free area }
+procedure TWM.WorkArea(out AX, AY, AW, AH: Integer);
+var
+  I, X, Y, W, H, X0, Y0, X1, Y1: Integer;
+begin
+  X0 := MaxInt; Y0 := MaxInt; X1 := -MaxInt; Y1 := -MaxInt;
+  for I := 0 to High(FMon) do
+  begin
+    WorkAreaOf(I, X, Y, W, H);
+    if X < X0 then X0 := X;
+    if Y < Y0 then Y0 := Y;
+    if X + W > X1 then X1 := X + W;
+    if Y + H > Y1 then Y1 := Y + H;
+  end;
+  AX := X0; AY := Y0; AW := X1 - X0; AH := Y1 - Y0;
   if AW < 1 then AW := 1;
   if AH < 1 then AH := 1;
 end;
@@ -1229,27 +1355,31 @@ end;
 
 procedure TWM.Place(C: TClient; HasPos: Boolean; CX, CY: Integer);
 var
-  AX, AY, AW, AH: Integer;
+  AX, AY, AW, AH, Mn: Integer;
   P: TClient;
   E: TExt;
 begin
   E := Ext(C);
-  WorkArea(AX, AY, AW, AH);
+  P := FindClient(C.Transient);
   if HasPos then
   begin
     GravityFrame(C, CX, CY, E, C.X, C.Y);
+    Mn := MonitorAt(C.X + C.W div 2, C.Y + C.H div 2);
   end
   else
   begin
+    { a dialog opens on its parent's monitor, anything else on the one the pointer is on }
+    if P <> nil then Mn := MonitorOf(P) else Mn := PointerMonitor;
+    WorkAreaOf(Mn, AX, AY, AW, AH);
     C.X := AX + (AW - C.W) div 2;
     C.Y := AY + (AH - C.H) div 2;
-    P := FindClient(C.Transient);
     if P <> nil then
     begin
       C.X := P.X + (P.W - C.W) div 2;
       C.Y := P.Y + (P.H - C.H) div 2;
     end;
   end;
+  WorkAreaOf(Mn, AX, AY, AW, AH);
   if C.X + C.W > AX + AW then C.X := AX + AW - C.W;
   if C.Y + C.H > AY + AH then C.Y := AY + AH - C.H;
   if C.X < AX then C.X := AX;
@@ -1558,7 +1688,7 @@ begin
   else
   begin
     C.SaveX := C.X; C.SaveY := C.Y; C.SaveW := C.W; C.SaveH := C.H;
-    WorkArea(AX, AY, AW, AH);
+    WorkAreaOf(MonitorOf(C), AX, AY, AW, AH);
     C.Maximized := True;
     SetFrameGeometry(C, AX, AY, AW, AH);
   end;
@@ -1749,7 +1879,7 @@ begin
   E := Ext(C);
   if C.Maximized then
   begin
-    WorkArea(AX, AY, AW, AH);
+    WorkAreaOf(MonitorOf(C), AX, AY, AW, AH);
     C.X := AX; C.Y := AY; C.W := AW; C.H := AH;
     ClientSizeOf(C, CW, CH);
   end
@@ -1760,7 +1890,7 @@ begin
     C.W := CW + E.L + E.R;
     C.H := CH + E.T + E.B;
     { a titlebar that would land off the top/left of the work area is pushed back in }
-    WorkArea(AX, AY, AW, AH);
+    WorkAreaOf(MonitorOf(C), AX, AY, AW, AH);
     if C.Y < AY then C.Y := AY;
     if C.X < AX then C.X := AX;
   end;
@@ -1912,7 +2042,7 @@ end;
 procedure TWM.SetFullscreen(C: TClient; On: Boolean);
 var
   M: TThemeMetrics;
-  AX, AY, AW, AH, NX, NY, NW, NH, CW, CH: Integer;
+  AX, AY, AW, AH, NX, NY, NW, NH, CW, CH, Mn: Integer;
 begin
   if C.Fullscreen = On then Exit;
   M := FTheme.Metrics;
@@ -1924,20 +2054,22 @@ begin
     begin
       C.SaveX := C.X; C.SaveY := C.Y; C.SaveW := C.W; C.SaveH := C.H;
     end;
+    Mn := MonitorOf(C);      { fullscreen fills the monitor the window is on }
     C.Fullscreen := True;
-    C.X := 0; C.Y := 0; C.W := FScrW; C.H := FScrH;
-    XMoveResizeWindow(FDpy, C.Frame, 0, 0, FScrW, FScrH);
-    XMoveResizeWindow(FDpy, C.Win, 0, 0, FScrW, FScrH);
+    C.X := FMon[Mn].X; C.Y := FMon[Mn].Y; C.W := FMon[Mn].W; C.H := FMon[Mn].H;
+    XMoveResizeWindow(FDpy, C.Frame, C.X, C.Y, C.W, C.H);
+    XMoveResizeWindow(FDpy, C.Win, 0, 0, C.W, C.H);
     XShapeCombineMask(FDpy, C.Frame, ShapeBounding, 0, 0, None, ShapeSet);   { no shape: plain rectangle }
     C.Painted := False;
     RaiseClient(C);
   end
   else
   begin
+    Mn := MonitorOf(C);
     C.Fullscreen := False;
     if C.Maximized then
     begin
-      WorkArea(AX, AY, AW, AH);
+      WorkAreaOf(Mn, AX, AY, AW, AH);
       NX := AX; NY := AY; NW := AW; NH := AH;
     end
     else
@@ -2872,6 +3004,82 @@ begin
     ReadHints(C);
 end;
 
+{ RandR says the screen layout changed (monitor plugged or unplugged, resolution changed):
+  refresh the monitor list, refit fullscreen and maximized windows, and pull windows that are
+  now off every monitor back onto the nearest one }
+procedure TWM.OnScreenChange(var Ev: TXEvent);
+begin
+  if Ev._type = FRandrBase + RRScreenChangeNotify then XRRUpdateConfiguration(@Ev);
+  ApplyScreenChange;
+end;
+
+{ servers send no event when a client defines monitors (xrandr --setmonitor), so the main
+  loop also looks every couple of seconds }
+procedure TWM.PollMonitors;
+var
+  Now: Int64;
+begin
+  if FRandrBase < 0 then Exit;
+  Now := GetTickCount64;
+  if Now - FLastPoll < 2000 then Exit;
+  FLastPoll := Now;
+  ApplyScreenChange;
+end;
+
+procedure TWM.ApplyScreenChange;
+var
+  I, Mn, AX, AY, AW, AH, NX, NY: Integer;
+  C: TClient;
+  CW, CH, OldW, OldH: Integer;
+  Old: TMonitorList;
+  Same: Boolean;
+begin
+  OldW := FScrW; OldH := FScrH;
+  Old := FMon;
+  FScrW := DisplayWidth(FDpy, FScr);
+  FScrH := DisplayHeight(FDpy, FScr);
+  FMon := nil;
+  RefreshMonitors;
+  Same := (OldW = FScrW) and (OldH = FScrH) and (Length(Old) = Length(FMon));
+  if Same then
+    for I := 0 to High(Old) do
+      if (Old[I].X <> FMon[I].X) or (Old[I].Y <> FMon[I].Y) or (Old[I].W <> FMon[I].W) or (Old[I].H <> FMon[I].H) then
+        Same := False;
+  if Same then Exit;
+  LogMonitors;
+  SetCards(FRoot, aDeskGeom, [culong(FScrW), culong(FScrH)]);
+  UpdateWorkarea;
+  for I := 0 to FClients.Count - 1 do
+  begin
+    C := TClient(FClients[I]);
+    Mn := MonitorOf(C);
+    if C.Fullscreen then
+    begin
+      C.X := FMon[Mn].X; C.Y := FMon[Mn].Y; C.W := FMon[Mn].W; C.H := FMon[Mn].H;
+      XMoveResizeWindow(FDpy, C.Frame, C.X, C.Y, C.W, C.H);
+      XMoveResizeWindow(FDpy, C.Win, 0, 0, C.W, C.H);
+      SendConfigure(C);
+    end
+    else if C.Maximized then
+    begin
+      WorkAreaOf(Mn, AX, AY, AW, AH);
+      SetFrameGeometry(C, AX, AY, AW, AH);
+    end
+    else if not InsideAnyMonitor(C.X + C.W div 2, C.Y + C.H div 2) then
+    begin
+      WorkAreaOf(Mn, AX, AY, AW, AH);
+      NX := C.X; NY := C.Y;
+      if NX + C.W > AX + AW then NX := AX + AW - C.W;
+      if NY + C.H > AY + AH then NY := AY + AH - C.H;
+      if NX < AX then NX := AX;
+      if NY < AY then NY := AY;
+      SetFrameGeometry(C, NX, NY, C.W, C.H);
+      Log(Format('0x%x was off every monitor: moved to %d,%d', [C.Win, NX, NY]));
+    end;
+  end;
+  Restack;
+end;
+
 procedure TWM.HandleEvent(var Ev: TXEvent);
 var
   MenuId: Integer;
@@ -2882,6 +3090,11 @@ begin
     R := FMenu.HandleEvent(Ev, MenuId);
     if R = mrSelected then RunMenuAction(MenuId);
     if R <> mrNone then Exit;
+  end;
+  if (FRandrBase >= 0) and ((Ev._type = FRandrBase + RRScreenChangeNotify) or (Ev._type = FRandrBase + RRNotify)) then
+  begin
+    OnScreenChange(Ev);
+    Exit;
   end;
   case Ev._type of
     MapRequest: OnMapRequest(Ev.xmaprequest);
@@ -2936,6 +3149,7 @@ begin
       Log(Format('reloaded key bindings from %s (%d bindings, %d warnings)',
         [FCfg.Path, Length(FCfg.Keys), Length(NewCfg.Warnings)]));
     end;
+    PollMonitors;
     XFlush(FDpy);
     fpFD_ZERO(Fds);
     fpFD_SET(Fd, Fds);

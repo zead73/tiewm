@@ -33,7 +33,7 @@ Run it ONLY on a display you mean to manage: `DISPLAY=:99 ./tiewm` (it refuses t
 the root; `TIEWM_THEME`, `TIEWM_FONT`, `TIEWM_DEBUG=1` are the only settings so far). SIGTERM/SIGINT hand all
 windows back to the root cleanly.
 
-Works (298 scenario checks, `tools/wmtest.sh`, scratch Xvfb on :99 only): manage/adopt/unmanage, centred
+Works (307 scenario checks, `tools/wmtest.sh`, scratch Xvfb on :99 only): manage/adopt/unmanage, centred
 placement (honours USPosition), themed frames with shape, click-to-focus with click replay to the app,
 raise on click, active/inactive repaint, title updates, titlebar drag and Alt+drag (also with Num/Caps Lock),
 Alt+right-drag resize, edge/corner resize with min-size and size-increment hints, close button
@@ -153,6 +153,15 @@ Toolkit-facing EWMH: `_NET_WM_ALLOWED_ACTIONS` (a taskbar can grey out what a wi
 fixed-size window, no shade without a titlebar), `_NET_REQUEST_FRAME_EXTENTS` (a toolkit asks, before mapping, how thick the
 frame will be), and splash windows (`_NET_WM_WINDOW_TYPE_SPLASH`) get no frame. `_NET_WM_PING`: closing an app that supports it
 also pings it; if it has not answered 3 seconds later and you click Close again, tiewm kills it (the log says why).
+
+Several monitors (RandR 1.5 monitor list, `twxrandr.pas`): maximize fills the work area of the monitor the window is on,
+fullscreen fills that monitor only, a new window opens centred on the monitor the pointer is on (a dialog on its parent's), and
+dock struts count for a monitor only where their band reaches into it (`_NET_WM_STRUT_PARTIAL` ranges are honoured, so a panel on
+one monitor does not shrink the other). When the layout changes (a monitor plugged or unplugged, a resolution change) fullscreen and
+maximized windows refit, and a window left off every monitor is pulled onto the nearest one. RandR sends events for real hardware
+changes; because servers send none for client-defined monitors (`xrandr --setmonitor`), the main loop also polls the list every 2 s.
+The test uses virtual monitors in a second Xvfb (`tools/monset.pas` defines them). Still single-screen in spirit: no per-monitor
+`_NET_WORKAREA` (it is the box around all of them), no "move to next monitor" key, no `_NET_WM_FULLSCREEN_MONITORS`.
 
 Careful when testing: the live session runs a process called `tiewm` too, so test scripts must never `pkill` by name
 (`wmtest.sh` only signals a tiewm whose DISPLAY is :99).
