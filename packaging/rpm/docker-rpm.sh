@@ -15,8 +15,8 @@ mkdir -p "$W/out"
 docker run --rm -v "$W:/w" "$IMG" bash -c '
   set -e
   dnf -y -q install epel-release >/dev/null 2>&1 || true
-  dnf -y -q --enablerepo=crb --enablerepo=epel install rpm-build fpc libX11-devel libXft-devel libXext-devel libXrandr-devel >/dev/null 2>&1 \
-    || dnf -y -q install rpm-build fpc libX11-devel libXft-devel libXext-devel libXrandr-devel >/dev/null
+  dnf -y -q --enablerepo=crb --enablerepo=epel install rpm-build fpc glibc-devel libX11-devel libXft-devel libXext-devel libXrandr-devel >/dev/null 2>&1 \
+    || dnf -y -q install rpm-build fpc glibc-devel libX11-devel libXft-devel libXext-devel libXrandr-devel >/dev/null
   mkdir -p /root/rpmbuild/SOURCES
   cp /w/tiewm-*.tar.gz /root/rpmbuild/SOURCES/
   rpmbuild -bb /w/tiewm.spec >/dev/null

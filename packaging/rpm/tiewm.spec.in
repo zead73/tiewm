@@ -6,6 +6,7 @@ License:        MIT
 URL:            https://github.com/zead73/tiewm
 Source0:        %{name}-%{version}.tar.gz
 BuildRequires:  fpc
+BuildRequires:  glibc-devel
 BuildRequires:  libX11-devel
 BuildRequires:  libXft-devel
 BuildRequires:  libXext-devel
