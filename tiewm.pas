@@ -20,7 +20,7 @@ uses
   SysUtils, BaseUnix, ctypes, x, xlib, twlog, twconfig, twwm;
 
 const
-  Version = '0.5';
+  Version = '0.5.1';
 
 var
   GWm: TWM;

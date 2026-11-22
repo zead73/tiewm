@@ -1,7 +1,7 @@
 # Maintainer: tiewm <noreply@users.noreply.github.com>
 # Built from a tarball of the working tree: run packaging/arch/build.sh, which makes the tarball with git archive and calls makepkg.
 pkgname=tiewm
-pkgver=0.5
+pkgver=0.5.1
 pkgrel=1
 pkgdesc='Floating X11 window manager that draws xfwm4 themes, written in Free Pascal'
 arch=(x86_64)

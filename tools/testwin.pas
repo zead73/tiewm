@@ -277,7 +277,9 @@ begin
   if ParentId <> 0 then XSetTransientForHint(Dpy, Win, ParentId);
   if MotifMode <> '' then SetMotif(Dpy, Win, MotifMode);
   if IconSpec <> '' then SetIcons(Dpy, Win, IconSpec);
-  if StateSpec <> '' then SetStates(Dpy, Win, StateSpec);
+  if StateSpec = 'empty' then      { a _NET_WM_STATE property that exists but lists no states }
+    XChangeProperty(Dpy, Win, XInternAtom(Dpy, '_NET_WM_STATE', 0), XA_ATOM, 32, PropModeReplace, nil, 0)
+  else if StateSpec <> '' then SetStates(Dpy, Win, StateSpec);
   if ClassName <> '' then
   begin
     CHint.res_name := PChar(ClassInst);

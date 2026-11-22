@@ -1193,6 +1193,17 @@ wmctrl -i -r "$GD" -b remove,modal; sec 0.6
 [ "$(hexnorm "$(active)")" = "$(hexnorm "$GM")" ]; RC=$?; check "once the dialog is no longer modal the main window takes the focus again" $RC
 stop_clients
 
+echo "== 45. a window whose _NET_WM_STATE exists but is empty is still managed (regression: GetAtoms looped over N-1 with N = 0)"
+stop_wm; stop_clients
+export TIEWM_CONFIG="$TMP/none.conf"; start_wm
+newwin es -t "Empty state" -w 300 -h 200 -c 77aa99 -s 60 -p 400,300 -S empty; ES=$LAST_ID
+sec 0.5
+kill -0 "$WMPID" 2>/dev/null; check "tiewm is still running" $?
+[ "$(viewable "$ES")" = "1" ]; RC=$?; check "the window is mapped inside a frame" $RC
+wmctrl -l | grep -q "Empty state"; check "and is in the client list" $?
+G=$(absgeom "$ES"); [ "$(field "$G" x)" -eq 400 ] && [ "$(field "$G" y)" -eq 300 ]; RC=$?; check "at the position it asked for ($G)" $RC
+stop_clients
+
 stop_wm
 
 echo
