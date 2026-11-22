@@ -546,8 +546,13 @@ begin
   Result := TList.Create;
   D := GetProp(Win, Prop, XA_ATOM, N);
   if D = nil then Exit;
-  for I := 0 to N - 1 do
+  { N is unsigned: an empty list (N = 0) must not turn "N - 1" into a huge loop bound }
+  I := 0;
+  while I < N do
+  begin
     Result.Add(Pointer(PtrUInt(PCULong(D)[I])));
+    Inc(I);
+  end;
   XFree(D);
 end;
 
