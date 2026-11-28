@@ -5,6 +5,9 @@
 - **Move hints for compositors.** While a window is being dragged tiewm tells a compositor that asks for it, by owning the
   `_TIECOMP_S<screen>` selection, when the move starts (and where the window is held) and when it ends. tiecomp uses this
   for wobbly windows. With no such compositor running, nothing changes. Keyboard moves send no hint.
+- **Other workspaces can be kept mapped for a compositor.** A compositor that draws them (tiecomp's desktop cube) asks with
+  `_TIECOMP_CUBE`; their frames then stay mapped but take no pointer input. If it goes away, even by crashing, they are
+  unmapped again. Without such a request nothing changes.
 
 ## 0.5.1 (2026-11-22)
 

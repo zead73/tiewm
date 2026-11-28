@@ -20,6 +20,8 @@ const
 
 function XShapeQueryExtension(dpy: PDisplay; EventBase, ErrorBase: pcint): cint; cdecl;
   external 'Xext' name 'XShapeQueryExtension';
+procedure XShapeCombineRectangles(dpy: PDisplay; Dest: TWindow; DestKind, XOff, YOff: cint;
+  Rects: PXRectangle; Count, Op, Ordering: cint); cdecl; external 'Xext' name 'XShapeCombineRectangles';
 procedure XShapeCombineMask(dpy: PDisplay; Dest: TWindow; DestKind, XOff, YOff: cint;
   Src: TPixmap; Op: cint); cdecl; external 'Xext' name 'XShapeCombineMask';
 

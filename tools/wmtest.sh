@@ -1231,6 +1231,48 @@ G=$(absgeom "$HM"); [ "$(field "$G" x)" -eq $((X1 + 40)) ]; RC=$?; check "and th
 kill -0 "$WMPID" 2>/dev/null; check "dragging with no receiver is harmless" $?
 stop_clients
 
+echo "== 47. a compositor that wants other workspaces kept mapped (_TIECOMP_CUBE)"
+stop_wm; stop_clients
+export TIEWM_CONFIG="$TMP/none.conf"; start_wm
+newwin ka -t "Under" -w 400 -h 300 -c 3366aa -s 90 -p 200,200; KA=$LAST_ID
+wmctrl -s 1; sec 0.5
+newwin kb -t "Other desk" -w 400 -h 300 -c aa6633 -s 90 -p 200,200; KB=$LAST_ID
+wmctrl -s 0; sec 0.5
+frameup() { "$XG" | awk -v id="$(printf '0x%X' "$(printf '%d' "$1")")" '/^win=/{v=$0} /^  win=/{ if ($1=="win="id) print v }' | sed -n 's/.*viewable=\([01]\).*/\1/p'; }
+[ "$(frameup "$KB")" = 0 ]; RC=$?; check "with no compositor the other workspace is unmapped" $RC
+"$HERE/hintrecv" >"$TMP/plain.log" 2>&1 & PL=$!; sec 0.6
+[ "$(frameup "$KB")" = 0 ]; RC=$?; check "a compositor that does not ask changes nothing" $RC
+kill $PL; wait $PL 2>/dev/null; sec 0.3
+"$HERE/hintrecv" -k >"$TMP/keep.log" 2>&1 & KP=$!; sec 0.8
+[ "$(frameup "$KB")" = 1 ] && [ "$(frameup "$KA")" = 1 ]; RC=$?; check "asked: both workspaces are mapped" $RC
+xprop -root _TIEWM_KEEPS_MAPPED | grep -q 'CARDINAL'; check "and the root says so" $?
+# the other desk's window lies on top in the same place: clicks must pass through it
+: >"$TMP/ka.log"; : >"$TMP/kb.log"
+wmctrl -i -r "$KB" -b add,above; sec 0.3
+"$XDO" move 300 300 click 1; sec 0.5
+grep -q ButtonPress "$TMP/ka.log" && ! grep -q ButtonPress "$TMP/kb.log"; RC=$?; check "a click goes to this workspace's window, not through to the hidden one" $RC
+wmctrl -s 1; sec 0.6
+: >"$TMP/ka.log"; : >"$TMP/kb.log"
+"$XDO" move 310 310 click 1; sec 0.5
+grep -q ButtonPress "$TMP/kb.log" && ! grep -q ButtonPress "$TMP/ka.log"; RC=$?; check "after switching, the other window takes clicks and the first does not" $RC
+[ "$(frameup "$KA")" = 1 ]; RC=$?; check "the workspace just left stays mapped" $RC
+newwin kc -t "New elsewhere" -w 200 -h 150 -c 66aa66 -s 90 -p 800,200; KC=$LAST_ID
+wmctrl -i -r "$KC" -t 0; sec 0.5
+[ "$(frameup "$KC")" = 1 ]; RC=$?; check "a window moved to another workspace stays mapped" $RC
+kill -9 $KP; wait $KP 2>/dev/null; sec 0.6
+[ "$(frameup "$KA")" = 0 ] && [ "$(frameup "$KC")" = 0 ] && [ "$(frameup "$KB")" = 1 ]; RC=$?; check "compositor killed: other workspaces are unmapped again" $RC
+! xprop -root _TIEWM_KEEPS_MAPPED | grep -q 'CARDINAL'; check "and the root property is gone" $?
+wmctrl -s 0; sec 0.6
+: >"$TMP/ka.log"
+"$XDO" move 320 320 click 1; sec 0.5
+grep -q ButtonPress "$TMP/ka.log"; RC=$?; check "and its window can be clicked again" $RC
+# a compositor already running when the window manager starts
+stop_wm; stop_clients
+"$HERE/hintrecv" -k >"$TMP/keep2.log" 2>&1 & KP=$!; sec 0.5
+start_wm; sec 0.5
+xprop -root _TIEWM_KEEPS_MAPPED | grep -q 'CARDINAL'; check "found at start-up too" $?
+kill $KP; wait $KP 2>/dev/null; sec 0.3
+
 stop_wm
 
 echo

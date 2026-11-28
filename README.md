@@ -274,6 +274,10 @@ tiewm leaves compositing to a separate program such as picom. A compositor that 
 the `_TIECOMP_S<screen>` selection: while it does, tiewm sends it a `_TIECOMP_MOVE` client message when a drag starts
 (frame, 1, and where in the frame it is held) and when it ends (frame, 0).
 
+A compositor that shows other workspaces (a desktop cube) can also put `_TIECOMP_CUBE` = 1 on its selection window and send
+a `_TIECOMP_CUBE` client message to the root. tiewm then leaves the frames of other workspaces mapped, with an empty input
+region, and sets `_TIEWM_KEEPS_MAPPED` on the root. It unmaps them again when the property says 0 or the window is destroyed.
+
 ## Not done
 
 Skipped on purpose, because xfwm4 here has them off or they are not needed: edge snapping and tiling, window resistance,

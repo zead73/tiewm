@@ -94,6 +94,9 @@ type
     aHidden, aFullscreen, aWmDesktop, aBelow, aAbove, aShaded, aSticky, aDeskNames, aMotif, aNetWmIcon, aModal, aSkipTaskbar, aSkipPager, aDemandsAttn: TAtom;
     aPing, aClientLeader, aMoveResize, aMoveResizeWin, aAllowed, aReqExtents, aTypeSplash: TAtom;
     aCompSel, aCompMove: TAtom;    { hints for a compositor that asks for them, see SendMoveHint }
+    aCompCube, aKeepsMapped: TAtom;
+    { set while a compositor wants windows of other workspaces left mapped }
+    FKeepOwner: TWindow;
     FActions: array[0..11] of TAtom;
     aStrut, aStrutPartial, aNumDesktops, aCurDesktop, aWorkarea, aDeskGeom, aDeskViewport, aSupportingCheck: TAtom;
     { drag state }
@@ -228,6 +231,9 @@ type
     procedure Place(C: TClient; HasPos: Boolean; CX, CY: Integer);
     procedure BeginDrag(C: TClient; Kind: TDragKind; Hit: THitKind; XRoot, YRoot: Integer; ATime: culong);
     procedure EndDrag;
+    procedure ShowFrame(C: TClient);
+    procedure CheckKeepMapped;
+    procedure SetKeepOwner(Owner: TWindow);
     procedure SendMoveHint(C: TClient; Starting: Boolean; GrabX, GrabY: Integer);
     procedure DoMotion(XRoot, YRoot: Integer);
     procedure HandleEvent(var Ev: TXEvent);
@@ -462,6 +468,7 @@ begin
   aAllowed := A('_NET_WM_ALLOWED_ACTIONS'); aReqExtents := A('_NET_REQUEST_FRAME_EXTENTS');
   aTypeSplash := A('_NET_WM_WINDOW_TYPE_SPLASH');
   aCompSel := A('_TIECOMP_S' + IntToStr(FScr)); aCompMove := A('_TIECOMP_MOVE');
+  aCompCube := A('_TIECOMP_CUBE'); aKeepsMapped := A('_TIEWM_KEEPS_MAPPED');
   FActions[0] := A('_NET_WM_ACTION_MOVE'); FActions[1] := A('_NET_WM_ACTION_RESIZE');
   FActions[2] := A('_NET_WM_ACTION_MINIMIZE'); FActions[3] := A('_NET_WM_ACTION_SHADE');
   FActions[4] := A('_NET_WM_ACTION_STICK'); FActions[5] := A('_NET_WM_ACTION_MAXIMIZE_HORZ');
@@ -630,10 +637,61 @@ begin
   Result := (not C.Iconic) and OnDesk(C);
 end;
 
+{ Maps or unmaps a frame to suit its workspace. With a compositor that draws
+  the other workspaces (a desktop cube), their frames stay mapped, so they have
+  contents, but take no pointer input and are not drawn by it elsewhere. }
+procedure TWM.ShowFrame(C: TClient);
+begin
+  if OnDesk(C) then
+  begin
+    XShapeCombineMask(FDpy, C.Frame, ShapeInput, 0, 0, None, ShapeSet);
+    XMapWindow(FDpy, C.Frame);
+  end
+  else if FKeepOwner <> None then
+  begin
+    { an empty input region first, so it can never be clicked while up }
+    XShapeCombineRectangles(FDpy, C.Frame, ShapeInput, 0, 0, nil, 0, ShapeSet, 0);
+    XMapWindow(FDpy, C.Frame);
+  end
+  else XUnmapWindow(FDpy, C.Frame);
+end;
+
 procedure TWM.ApplyVisibility(C: TClient);
 begin
   if C.Iconic then Exit;
-  if OnDesk(C) then XMapWindow(FDpy, C.Frame) else XUnmapWindow(FDpy, C.Frame);
+  ShowFrame(C);
+end;
+
+{ A compositor asks by owning _TIECOMP_S<screen> and putting _TIECOMP_CUBE = 1
+  on that window. We answer with _TIEWM_KEEPS_MAPPED on the root, naming our
+  check window, so that it knows we complied and that we are still here. }
+procedure TWM.CheckKeepMapped;
+var
+  Owner: TWindow;
+  D: PByte;
+  N: culong;
+begin
+  Owner := XGetSelectionOwner(FDpy, aCompSel);
+  if Owner <> None then
+  begin
+    D := GetProp(Owner, aCompCube, XA_CARDINAL, N);
+    if (D = nil) or (N < 1) or (PCULong(D)[0] <> 1) then Owner := None;
+    if D <> nil then XFree(D);
+  end;
+  SetKeepOwner(Owner);
+end;
+
+procedure TWM.SetKeepOwner(Owner: TWindow);
+var
+  I: Integer;
+begin
+  if Owner = FKeepOwner then Exit;
+  FKeepOwner := Owner;
+  { its DestroyNotify (it is a child of the root) tells us if it dies }
+  for I := 0 to FClients.Count - 1 do ApplyVisibility(TClient(FClients[I]));
+  if Owner <> None then SetCards(FRoot, aKeepsMapped, [culong(FCheckWin)])
+  else XDeleteProperty(FDpy, FRoot, aKeepsMapped);
+  Log(Format('keeping other workspaces mapped: %d', [Ord(Owner <> None)]));
 end;
 
 procedure TWM.SetDesktopProp(C: TClient);
@@ -1557,7 +1615,7 @@ begin
   else
   begin
     XMapWindow(FDpy, Win);
-    if OnDesk(C) then XMapWindow(FDpy, C.Frame);
+    ShowFrame(C);
     SetWmState(C, NormalState);
   end;
   SetDesktopProp(C);
@@ -2095,7 +2153,7 @@ begin
   if not C.Iconic then Exit;
   C.Iconic := False;
   XMapWindow(FDpy, C.Win);
-  if OnDesk(C) then XMapWindow(FDpy, C.Frame);
+  ShowFrame(C);
   SetWmState(C, NormalState);
   UpdateNetState(C);
   for I := 0 to FClients.Count - 1 do
@@ -2669,7 +2727,7 @@ begin
     else
     begin
       XMapWindow(FDpy, C.Win);
-      if OnDesk(C) then XMapWindow(FDpy, C.Frame);
+      ShowFrame(C);
     end;
     Exit;
   end;
@@ -2759,6 +2817,13 @@ var
   C: TClient;
   I: Integer;
 begin
+  { the compositor that wanted windows kept mapped is gone: unmap them again,
+    or they would all show at once }
+  if (FKeepOwner <> None) and (Ev.window = FKeepOwner) then
+  begin
+    SetKeepOwner(None);
+    Exit;
+  end;
   C := FindClient(Ev.window);
   if C <> nil then
   begin
@@ -3038,6 +3103,11 @@ var
   K: Integer;
   A: TAtom;
 begin
+  if Ev.message_type = aCompCube then
+  begin
+    CheckKeepMapped;
+    Exit;
+  end;
   if (Ev.message_type = aCurDesktop) and (Ev.window = FRoot) then
   begin
     SwitchDesktop(Integer(Ev.data.l[0]), CurrentTime);
@@ -3384,6 +3454,7 @@ var
   Tv: TTimeVal;
 begin
   ScanExisting;
+  CheckKeepMapped;    { a compositor may have been running before us }
   Fd := ConnectionNumber(FDpy);
   XSync(FDpy, 0);
   while not FQuit do
@@ -3448,6 +3519,7 @@ begin
   XDeleteProperty(FDpy, FRoot, aClientList);
   XDeleteProperty(FDpy, FRoot, aClientListStk);
   XDeleteProperty(FDpy, FRoot, aSupportingCheck);
+  XDeleteProperty(FDpy, FRoot, aKeepsMapped);
   XDeleteProperty(FDpy, FRoot, aSupported);
   XDestroyWindow(FDpy, FCheckWin);
   XSetInputFocus(FDpy, FRoot, RevertToPointerRoot, CurrentTime);
