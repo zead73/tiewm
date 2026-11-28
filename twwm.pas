@@ -186,7 +186,7 @@ type
     procedure SetShaded(C: TClient; On: Boolean);
     function WantsDecorations(Win: TWindow): Boolean;
     procedure ReadClass(C: TClient);
-    procedure ReadStates(C: TClient; out Sticky: Boolean);
+    procedure ReadStates(C: TClient; out Sticky, Full: Boolean);
     function ExtraHas(C: TClient; A: TAtom): Boolean;
     procedure ExtraSet(C: TClient; A: TAtom; On: Boolean);
     function WmStateOf(Win: TWindow): Integer;
@@ -1134,14 +1134,16 @@ end;
 
 { The states an application sets before mapping its window. Everything tiewm does not manage itself
   (skip_taskbar, skip_pager, demands_attention, ...) is remembered and written back, so the panel
-  still sees it. Fullscreen/maximized/shaded/hidden are requested by client message after mapping. }
-procedure TWM.ReadStates(C: TClient; out Sticky: Boolean);
+  still sees it. Fullscreen is honoured too (games and Wine set it only this way); maximized/shaded/hidden
+  are not, and are requested by client message after mapping. }
+procedure TWM.ReadStates(C: TClient; out Sticky, Full: Boolean);
 var
   L: TList;
   I: Integer;
   A: TAtom;
 begin
   Sticky := False;
+  Full := False;
   SetLength(C.Extra, 0);
   L := GetAtoms(C.Win, aNetWmState);
   try
@@ -1152,7 +1154,8 @@ begin
       else if A = aAbove then C.Above := True
       else if A = aBelow then C.Below := True
       else if A = aSticky then Sticky := True
-      else if (A = aMaxVert) or (A = aMaxHorz) or (A = aFullscreen) or (A = aShaded) or (A = aHidden) then
+      else if A = aFullscreen then Full := True
+      else if (A = aMaxVert) or (A = aMaxHorz) or (A = aShaded) or (A = aHidden) then
       begin
         { not honoured at map time }
       end
@@ -1513,7 +1516,7 @@ var
   C: TClient;
   E: TExt;
   RuleTb: Boolean;
-  StickyInit: Boolean;
+  StickyInit, FullInit: Boolean;
   Sz: TXSizeHints;
   Supplied: clong;
   HasPos: Boolean;
@@ -1558,7 +1561,7 @@ begin
   ReadClass(C);
   { adopting a window a previous WM had minimized, or an app that asks to start minimized }
   if Startup then C.StartIconic := (Atr.map_state = IsUnmapped) and (WmStateOf(Win) = IconicState);
-  ReadStates(C, StickyInit);
+  ReadStates(C, StickyInit, FullInit);
   ReadIcon(C);
   C.Decorated := WantsDecorations(Win) and not WindowTypeIs(Win, aTypeSplash);
   { a rule from the config file (matched by WM_CLASS) beats the app's own hints }
@@ -1619,8 +1622,10 @@ begin
     SetWmState(C, NormalState);
   end;
   SetDesktopProp(C);
-  UpdateNetState(C);
   SetCards(Win, aFrameExtents, [culong(E.L), culong(E.R), culong(E.T), culong(E.B)]);
+  { writes the state and the frame extents itself; a window that starts minimized stays that way }
+  if FullInit and not C.StartIconic then SetFullscreen(C, True)
+  else UpdateNetState(C);
   SendConfigure(C);
   UpdateClientList;
   Log(Format('managed 0x%x "%s" frame 0x%x at %d,%d %dx%d%s%s', [Win, C.Name, C.Frame, C.X, C.Y, C.W, C.H,

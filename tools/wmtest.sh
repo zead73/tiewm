@@ -1273,6 +1273,20 @@ start_wm; sec 0.5
 xprop -root _TIEWM_KEEPS_MAPPED | grep -q 'CARDINAL'; check "found at start-up too" $?
 kill $KP; wait $KP 2>/dev/null; sec 0.3
 
+stop_wm; stop_clients
+echo "== 48. fullscreen asked for before mapping (games, Wine)"
+start_wm
+newwin pdk -t "Fake panel" -w 1280 -h 40 -c 111111 -s 90 -p 0,760 -y dock; PDK=$LAST_ID
+newwin pf -t "Game" -w 300 -h 200 -c 884422 -s 90 -p 400,300 -S fullscreen; PF=$LAST_ID
+G=$(absgeom "$PF"); [ "$(field "$G" x)" -eq 0 ] && [ "$(field "$G" y)" -eq 0 ] && [ "$(field "$G" w)" -eq 1280 ] && [ "$(field "$G" h)" -eq 800 ]; RC=$?; check "it opens covering the whole screen ($G)" $RC
+xprop -id "$PF" _NET_WM_STATE | grep -q FULLSCREEN; check "_NET_WM_STATE keeps FULLSCREEN" $?
+xprop -id "$PF" _NET_FRAME_EXTENTS | grep -q "= 0, 0, 0, 0"; check "frame extents are zero" $?
+wmctrl -i -a "$PF"; sec 0.5
+[ "$(stackpos "$PF")" -gt "$(toppos "$PDK")" ]; check "it stays above the panel after being activated" $?
+wmctrl -i -r "$PF" -b remove,fullscreen; sec 0.6
+G=$(absgeom "$PF"); [ "$(field "$G" w)" -eq 300 ] && [ "$(field "$G" h)" -eq 200 ]; RC=$?; check "leaving fullscreen gives it its own size ($G)" $RC
+[ "$(stackpos "$PF")" -lt "$(toppos "$PDK")" ]; check "and the panel is back on top" $?
+
 stop_wm
 
 echo
