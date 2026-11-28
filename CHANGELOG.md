@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **The panel comes back over a fullscreen window that is not in use.** Any fullscreen window, even on another workspace,
+  used to stop tiewm raising the panel. Now it stays under one only while that window (or its dialog) has the focus, or
+  the focus is on another monitor. Scenario section 49.
+
 ## 0.6.1 (2026-11-28)
 
 - **Fixed: a window that asks to be fullscreen before it appears now is.** tiewm ignored `_NET_WM_STATE_FULLSCREEN` set

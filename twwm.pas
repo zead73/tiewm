@@ -140,6 +140,10 @@ type
     function IsUnframed(Win: TWindow): Boolean;
     function HasState(Win: TWindow; St: TAtom): Boolean;
     procedure Restack;
+    function BelongsTo(C, Main: TClient): Boolean;
+    function CoveringFullscreen: TClient;
+    function AnyFullscreen: Boolean;
+    procedure RestackFullscreen;
     function OnDesk(C: TClient): Boolean;
     function VisibleNow(C: TClient): Boolean;
     procedure ApplyVisibility(C: TClient);
@@ -733,7 +737,11 @@ begin
   FCurDesk := N;
   SetCards(FRoot, aCurDesktop, [culong(N)]);
   for I := 0 to FClients.Count - 1 do ApplyVisibility(TClient(FClients[I]));
-  if (FFocused <> nil) and VisibleNow(FFocused) then Exit;
+  if (FFocused <> nil) and VisibleNow(FFocused) then
+  begin
+    RestackFullscreen;
+    Exit;
+  end;
   FFocused := nil;
   for I := FMru.Count - 1 downto 0 do
   begin
@@ -746,6 +754,7 @@ begin
   end;
   XSetInputFocus(FDpy, FRoot, RevertToPointerRoot, ATime);
   XDeleteProperty(FDpy, FRoot, aActive);
+  RestackFullscreen;
 end;
 
 procedure TWM.MoveToDesktop(C: TClient; D: Integer);
@@ -765,6 +774,7 @@ begin
     if (T <> C) and (T.Transient = C.Win) then MoveToDesktop(T, D);
   end;
   if (C = FFocused) and (not OnDesk(C)) then FocusNext(C);
+  RestackFullscreen;
 end;
 
 function TWM.HasState(Win: TWindow; St: TAtom): Boolean;
@@ -784,15 +794,16 @@ end;
 
 { Layers, bottom to top: desktop windows, "below" docks (conky), normal windows,
   docks (panel). Normal frames get raised on their own; this puts the others back.
-  While a window is fullscreen the panel is left alone so it cannot cover it. }
+  While a fullscreen window is in use the panel is not raised, and goes right below that window. }
 procedure TWM.Restack;
 var
   I: Integer;
   Full: Boolean;
+  Cover: TClient;
+  Ch: TXWindowChanges;
 begin
-  Full := False;
-  for I := 0 to FClients.Count - 1 do
-    if TClient(FClients[I]).Fullscreen and not TClient(FClients[I]).Iconic then Full := True;
+  Cover := CoveringFullscreen;
+  Full := Cover <> nil;
   for I := 0 to FClients.Count - 1 do
     if TClient(FClients[I]).Below and VisibleNow(TClient(FClients[I])) then
       XLowerWindow(FDpy, TClient(FClients[I]).Frame);
@@ -807,7 +818,61 @@ begin
         XRaiseWindow(FDpy, TClient(FClients[I]).Frame);
     for I := 0 to High(FDocks) do
       if not FDocks[I].Below then XRaiseWindow(FDpy, FDocks[I].Win);
+  end
+  else if (FFocused <> nil) and BelongsTo(FFocused, Cover) then
+  begin
+    { the panel may have been raised while another window had the focus; only it moves }
+    Ch.sibling := Cover.Frame;
+    Ch.stack_mode := Below;
+    for I := 0 to High(FDocks) do
+      if not FDocks[I].Below then XConfigureWindow(FDpy, FDocks[I].Win, CWSibling or CWStackMode, @Ch);
   end;
+end;
+
+{ C is Main, or a dialog of it }
+function TWM.BelongsTo(C, Main: TClient): Boolean;
+var
+  Depth: Integer;
+begin
+  for Depth := 0 to 4 do
+  begin
+    if C = nil then Break;
+    if C = Main then Exit(True);
+    C := FindClient(C.Transient);
+  end;
+  Result := False;
+end;
+
+{ The fullscreen window the panel must stay under, or nil. It has to be on this workspace, and in
+  use: a window on the same monitor having the focus ends that, until it is focused again. }
+function TWM.CoveringFullscreen: TClient;
+var
+  I: Integer;
+  C: TClient;
+begin
+  Result := nil;
+  for I := 0 to FClients.Count - 1 do
+  begin
+    C := TClient(FClients[I]);
+    if not (C.Fullscreen and VisibleNow(C)) then Continue;
+    if (FFocused <> nil) and BelongsTo(FFocused, C) then Exit(C);
+    if (FFocused = nil) or (MonitorOf(FFocused) <> MonitorOf(C)) then Result := C;
+  end;
+end;
+
+function TWM.AnyFullscreen: Boolean;
+var
+  I: Integer;
+begin
+  for I := 0 to FClients.Count - 1 do
+    if TClient(FClients[I]).Fullscreen then Exit(True);
+  Result := False;
+end;
+
+{ after a change of focus or of what is visible: only matters while something is fullscreen }
+procedure TWM.RestackFullscreen;
+begin
+  if AnyFullscreen then Restack;
 end;
 
 procedure TWM.ReadStruts(var D: TDock);
@@ -1638,7 +1703,9 @@ procedure TWM.Unmanage(C: TClient; Destroyed: Boolean);
 var
   E: TExt;
   Par: TClient;
+  WasFull: Boolean;
 begin
+  WasFull := C.Fullscreen;
   E := Ext(C);
   Par := FindClient(C.Transient);
   if FMenuClient = C then
@@ -1676,6 +1743,7 @@ begin
   C.Icon.Free;
   C.Free;
   UpdateClientList;
+  if WasFull then Restack else RestackFullscreen;
 end;
 
 procedure TWM.ScanExisting;
@@ -1737,6 +1805,7 @@ begin
   SetWins(FRoot, aActive, [C.Win]);
   if (Old <> nil) and (Old <> C) then Repaint(Old, False);
   Repaint(C, False);
+  RestackFullscreen;
 end;
 
 procedure TWM.RaiseClient(C: TClient);
@@ -1854,6 +1923,7 @@ begin
   if (Old <> nil) and (FClients.IndexOf(Old) >= 0) and (not Old.Iconic) then Repaint(Old, False);
   XSetInputFocus(FDpy, FRoot, RevertToPointerRoot, CurrentTime);
   XDeleteProperty(FDpy, FRoot, aActive);
+  RestackFullscreen;
 end;
 
 { _MOTIF_WM_HINTS: flags, functions, decorations, input_mode, status. When the decorations
@@ -2148,6 +2218,7 @@ begin
   UpdateNetState(C);
   if FDrag <> dgNone then if FDragClient = C then EndDrag;
   if FFocused = C then FocusNext(C);
+  RestackFullscreen;
 end;
 
 procedure TWM.Deiconify(C: TClient);

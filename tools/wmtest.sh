@@ -1289,6 +1289,50 @@ G=$(absgeom "$PF"); [ "$(field "$G" w)" -eq 300 ] && [ "$(field "$G" h)" -eq 200
 
 stop_wm
 
+stop_clients
+echo "== 49. the panel comes back over a fullscreen window that is not in use"
+start_wm
+newwin bdk -t "Fake panel" -w 1280 -h 40 -c 111111 -s 120 -p 0,760 -y dock; BDK=$LAST_ID
+newwin bf -t "Game" -w 300 -h 200 -c 884422 -s 120 -p 400,300 -S fullscreen; BF=$LAST_ID
+newwin bn -t "Other" -w 300 -h 200 -c 228844 -s 120 -p 200,200; BN=$LAST_ID
+covered() { [ "$(stackpos "$1")" -gt "$(toppos "$BDK")" ]; }
+under() { [ "$(stackpos "$1")" -lt "$(toppos "$BDK")" ]; }
+under "$BN"; check "another window opened over it stays under the panel" $?
+wmctrl -i -a "$BF"; sec 0.5
+covered "$BF"; check "back in the fullscreen window, it covers the panel" $?
+wmctrl -i -a "$BN"; sec 0.5
+under "$BN" && under "$BF"; check "back in the other window, the panel is above both" $?
+wmctrl -i -a "$BF"; sec 0.5
+newwin bt -t "Dialog" -w 200 -h 100 -c 777777 -s 120 -p 500,300 -P "$BF"; BT=$LAST_ID
+covered "$BF" && covered "$BT"; check "its own dialog does not bring the panel over it" $?
+wmctrl -i -c "$BT"; sec 0.5
+covered "$BF"; check "nor does closing the dialog" $?
+wmctrl -s 1; sec 0.5
+newwin bo -t "Elsewhere" -w 300 -h 200 -c 224488 -s 120 -p 600,200; BO=$LAST_ID
+under "$BO"; check "on another workspace windows stay under the panel" $?
+wmctrl -s 0; sec 0.5
+covered "$BF"; check "returning to the game covers the panel again" $?
+wmctrl -i -r "$BF" -t 2; sec 0.5
+under "$BN"; check "moving it away brings the panel back over what is left" $?
+wmctrl -i -r "$BF" -t 0; sec 0.3; wmctrl -i -a "$BF"; sec 0.5
+"$XDO" keydown Alt_L key F9 keyup Alt_L; sec 0.6
+under "$BN"; check "minimizing it brings the panel back" $?
+wmctrl -i -a "$BF"; sec 0.5
+covered "$BF"; check "restoring it covers the panel again" $?
+wmctrl -i -c "$BF"; sec 0.6
+under "$BN"; check "closing it brings the panel back" $?
+# two monitors side by side: working on the other one leaves the game covering the panel
+stop_wm; stop_clients
+xrandr_split() { "$HERE/monset" 60 left=0,0,640,800 right=640,0,640,800 >/dev/null 2>&1 & BMON=$!; sleep 0.5; }
+xrandr_split; start_wm
+newwin bdk -t "Fake panel" -w 1280 -h 40 -c 111111 -s 40 -p 0,760 -y dock; BDK=$LAST_ID
+newwin bf -t "Game" -w 300 -h 200 -c 884422 -s 40 -p 100,100 -S fullscreen; BF=$LAST_ID
+newwin bn -t "Other monitor" -w 300 -h 200 -c 228844 -s 40 -p 800,200; BN=$LAST_ID
+covered "$BF"; check "a window focused on the other monitor leaves it covering the panel" $?
+kill "$BMON" 2>/dev/null; wait "$BMON" 2>/dev/null; "$HERE/monset" 0 del=left >/dev/null 2>&1; "$HERE/monset" 0 del=right >/dev/null 2>&1
+
+stop_wm
+
 echo
 echo "passed $PASS, failed $FAIL"
 [ "$FAIL" -eq 0 ]

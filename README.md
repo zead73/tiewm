@@ -87,7 +87,8 @@ Any other Linux: install FPC 3.2.2 and the X11 dev packages and build it yoursel
   A list of the windows is drawn in the middle of the pointer's monitor (selected row highlighted, minimized ones dimmed and
   marked "(minimized)"); no thumbnails.
 - **Layers**, bottom to top: desktop window, conky-style docks with `_NET_WM_STATE_BELOW`, below-windows, normal windows,
-  above-windows, other docks (the panel). A fullscreen window goes over everything. Re-applied after every raise.
+  above-windows, other docks (the panel). A fullscreen window goes over the panel while it
+  (or its dialog) has the focus, or the focus is on another monitor. Re-applied after every raise.
 - **Closing**: `WM_DELETE_WINDOW`, with `XKillClient` for apps that do not support it. If an app supports `_NET_WM_PING`, it is
   pinged when closed; click Close again more than 3 seconds after an unanswered ping and tiewm kills it.
 
@@ -284,7 +285,7 @@ region, and sets `_TIEWM_KEEPS_MAPPED` on the root. It unmaps them again when th
 Skipped on purpose, because xfwm4 here has them off or they are not needed: edge snapping and tiling, window resistance,
 session save / restore (XSMP), focus-stealing prevention, zoom. Not implemented: `_NET_WM_USER_TIME`, a per-monitor
 `_NET_WORKAREA`, `_NET_WM_FULLSCREEN_MONITORS`, an icon-theme lookup for apps that set no `_NET_WM_ICON`, thumbnails in the
-Alt+Tab list. Fullscreen, maximized, shaded and hidden requested in an app's initial `_NET_WM_STATE` are not applied at map
+Alt+Tab list. Maximized, shaded and hidden requested in an app's initial `_NET_WM_STATE` are not applied at map
 time (apps ask for those by client message after mapping).
 
 ## License
