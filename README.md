@@ -1,10 +1,10 @@
 # tiewm
 
 A floating X11 window manager written in Free Pascal (FPC 3.2.2, plain Xlib, no LCL). It draws real xfwm4 themes, so it
-can replace xfwm4 under LXQt; picom already does the compositing, so the WM only has to manage windows and draw frames.
+can replace xfwm4 under LXQt; a separate compositor (picom, or [tiecomp](https://github.com/zead73/tiecomp)) does the compositing, so the WM only has to manage windows and draw frames.
 The point of the project is learning and showing what Pascal can do.
 
-Status (tiewm 0.5.1): in daily use as the author's window manager, on two monitors. 335 scenario checks pass against a
+Status (tiewm 0.6.0): in daily use as the author's window manager, on two monitors. 354 scenario checks pass against a
 scratch X server, and all seven installed xfwm4 themes match real xfwm4 pixel for pixel.
 
 - [Install](#install)
@@ -25,9 +25,9 @@ Download the package for your distribution from the [Releases page](https://gith
 
 | Distribution | Install |
 |---|---|
-| Debian 12+ / Ubuntu (amd64) | `sudo apt install ./tiewm_0.5.1_amd64.deb` |
-| Fedora, RHEL / AlmaLinux / Rocky 9+ (x86_64) | `sudo dnf install ./tiewm-0.5.1-1.el9.x86_64.rpm` |
-| Arch Linux (x86_64) | `sudo pacman -U tiewm-0.5.1-1-x86_64.pkg.tar.zst` |
+| Debian 12+ / Ubuntu (amd64) | `sudo apt install ./tiewm_0.6.0_amd64.deb` |
+| Fedora, RHEL / AlmaLinux / Rocky 9+ (x86_64) | `sudo dnf install ./tiewm-0.6.0-1.el9.x86_64.rpm` |
+| Arch Linux (x86_64) | `sudo pacman -U tiewm-0.6.0-1-x86_64.pkg.tar.zst` |
 
 Any other Linux: install FPC 3.2.2 and the X11 dev packages and build it yourself, see [Building and running](#building-and-running).
 
@@ -35,7 +35,8 @@ Any other Linux: install FPC 3.2.2 and the X11 dev packages and build it yoursel
    optional dependency). Install that, or put a theme in `~/.themes`; with no theme at all tiewm refuses to start and says so.
 2. **Start it**: pick **tiewm** in the login screen's session list (the packages add the entry), or, under LXQt, set the window
    manager in Session Settings to `tiewm`, or from a console session put `exec tiewm` in `~/.xinitrc`. tiewm is only the window
-   manager: bring your own panel (lxqt-panel works), and `picom` for shadows and transparency.
+   manager: bring your own panel (lxqt-panel works), and `picom` or [tiecomp](https://github.com/zead73/tiecomp) for shadows
+   and transparency (tiecomp adds wobbly windows and a desktop cube).
 3. **Configure** (optional): `mkdir -p ~/.config/tiewm && cp /usr/share/doc/tiewm/tiewm.conf.example ~/.config/tiewm/tiewm.conf`,
    then edit it; the file documents every setting. See [Configuration](#configuration).
 
@@ -270,7 +271,7 @@ differ only by anti-aliasing of the glyphs (a few dozen pixels, at most 6 levels
 
 ## Compositors
 
-tiewm leaves compositing to a separate program such as picom. A compositor that wants to animate window moves can also own
+tiewm leaves compositing to a separate program such as picom or [tiecomp](https://github.com/zead73/tiecomp). A compositor that wants to animate window moves can also own
 the `_TIECOMP_S<screen>` selection: while it does, tiewm sends it a `_TIECOMP_MOVE` client message when a drag starts
 (frame, 1, and where in the frame it is held) and when it ends (frame, 0).
 

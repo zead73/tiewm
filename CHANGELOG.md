@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.0 (2026-11-28)
 
 - **Move hints for compositors.** While a window is being dragged tiewm tells a compositor that asks for it, by owning the
   `_TIECOMP_S<screen>` selection, when the move starts (and where the window is held) and when it ends. tiecomp uses this
