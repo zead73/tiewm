@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.2 (2026-11-28)
 
 - **The panel comes back over a fullscreen window that is not in use.** Any fullscreen window, even on another workspace,
   used to stop tiewm raising the panel. Now it stays under one only while that window (or its dialog) has the focus, or
