@@ -1204,6 +1204,33 @@ wmctrl -l | grep -q "Empty state"; check "and is in the client list" $?
 G=$(absgeom "$ES"); [ "$(field "$G" x)" -eq 400 ] && [ "$(field "$G" y)" -eq 300 ]; RC=$?; check "at the position it asked for ($G)" $RC
 stop_clients
 
+echo "== 46. move hints for a compositor (_TIECOMP_S0)"
+stop_wm; stop_clients
+export TIEWM_CONFIG="$TMP/none.conf"; start_wm
+newwin hm -t "Hinted" -w 300 -h 200 -c 8855aa -s 60 -p 300,200; HM=$LAST_ID
+"$HERE/hintrecv" >"$TMP/hints.log" 2>&1 & HR=$!
+sec 0.5
+G=$(absgeom "$HM"); X0=$(field "$G" x); Y0=$(field "$G" y)
+# hold the titlebar 100 px along and 9 px down from the frame's corner
+"$XDO" drag $((X0 - M + 100)) $((Y0 - T + 9)) $((X0 - M + 160)) $((Y0 - T + 49)); sec 0.6
+grep -q 'start=1 grab=100,9$' "$TMP/hints.log"; RC=$?; check "a titlebar drag sends begin with the grab point" $RC "$(cat "$TMP/hints.log")"
+[ "$(grep -c 'start=0' "$TMP/hints.log")" = 1 ] && [ "$(grep -c 'start=1' "$TMP/hints.log")" = 1 ]; RC=$?; check "and exactly one end" $RC
+G=$(absgeom "$HM"); [ "$(field "$G" x)" -eq $((X0 + 60)) ] && [ "$(field "$G" y)" -eq $((Y0 + 40)) ]; RC=$?; check "the window moved as without hints ($G)" $RC
+: >"$TMP/hints.log"
+X1=$(field "$G" x); Y1=$(field "$G" y)
+"$XDO" move $((X1 + 50)) $((Y1 + 50)) keydown Alt_L down 3 move $((X1 + 90)) $((Y1 + 90)) up 3 keyup Alt_L; sec 0.6
+[ ! -s "$TMP/hints.log" ] || ! grep -q start "$TMP/hints.log"; RC=$?; check "a resize sends no move hint" $RC "$(cat "$TMP/hints.log")"
+# the receiver dies in the middle of a drag
+G=$(absgeom "$HM"); X1=$(field "$G" x); Y1=$(field "$G" y)
+"$XDO" move $((X1 + 100)) $((Y1 - 10)) down 1 move $((X1 + 120)) $((Y1 + 20)); sec 0.3
+kill $HR; wait $HR 2>/dev/null; sec 0.3
+"$XDO" move $((X1 + 140)) $((Y1 + 50)) up 1; sec 0.6
+kill -0 "$WMPID" 2>/dev/null; check "tiewm survives the receiver vanishing mid-drag" $?
+G=$(absgeom "$HM"); [ "$(field "$G" x)" -eq $((X1 + 40)) ]; RC=$?; check "and the drag still finished ($G)" $RC
+"$XDO" drag $((X1 + 140)) $((Y1 + 50)) $((X1 + 100)) $((Y1 + 20)); sec 0.6
+kill -0 "$WMPID" 2>/dev/null; check "dragging with no receiver is harmless" $?
+stop_clients
+
 stop_wm
 
 echo

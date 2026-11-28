@@ -93,6 +93,7 @@ type
     aTypeDock, aTypeDesktop, aTypeMenu, aTypeDropdown, aTypePopup, aTypeTooltip, aTypeNotification, aTypeCombo, aTypeDnd: TAtom;
     aHidden, aFullscreen, aWmDesktop, aBelow, aAbove, aShaded, aSticky, aDeskNames, aMotif, aNetWmIcon, aModal, aSkipTaskbar, aSkipPager, aDemandsAttn: TAtom;
     aPing, aClientLeader, aMoveResize, aMoveResizeWin, aAllowed, aReqExtents, aTypeSplash: TAtom;
+    aCompSel, aCompMove: TAtom;    { hints for a compositor that asks for them, see SendMoveHint }
     FActions: array[0..11] of TAtom;
     aStrut, aStrutPartial, aNumDesktops, aCurDesktop, aWorkarea, aDeskGeom, aDeskViewport, aSupportingCheck: TAtom;
     { drag state }
@@ -227,6 +228,7 @@ type
     procedure Place(C: TClient; HasPos: Boolean; CX, CY: Integer);
     procedure BeginDrag(C: TClient; Kind: TDragKind; Hit: THitKind; XRoot, YRoot: Integer; ATime: culong);
     procedure EndDrag;
+    procedure SendMoveHint(C: TClient; Starting: Boolean; GrabX, GrabY: Integer);
     procedure DoMotion(XRoot, YRoot: Integer);
     procedure HandleEvent(var Ev: TXEvent);
     procedure OnMapRequest(var Ev: TXMapRequestEvent);
@@ -459,6 +461,7 @@ begin
   aClientLeader := A('WM_CLIENT_LEADER');
   aAllowed := A('_NET_WM_ALLOWED_ACTIONS'); aReqExtents := A('_NET_REQUEST_FRAME_EXTENTS');
   aTypeSplash := A('_NET_WM_WINDOW_TYPE_SPLASH');
+  aCompSel := A('_TIECOMP_S' + IntToStr(FScr)); aCompMove := A('_TIECOMP_MOVE');
   FActions[0] := A('_NET_WM_ACTION_MOVE'); FActions[1] := A('_NET_WM_ACTION_RESIZE');
   FActions[2] := A('_NET_WM_ACTION_MINIMIZE'); FActions[3] := A('_NET_WM_ACTION_SHADE');
   FActions[4] := A('_NET_WM_ACTION_STICK'); FActions[5] := A('_NET_WM_ACTION_MAXIMIZE_HORZ');
@@ -2567,15 +2570,42 @@ begin
        None, Cur, ATime) <> GrabSuccess then
     FDrag := dgNone;
   XAllowEvents(FDpy, AsyncPointer, ATime);
+  if FDrag = dgMove then SendMoveHint(C, True, XRoot - C.X, YRoot - C.Y);
 end;
 
 procedure TWM.EndDrag;
 begin
   if FDrag = dgNone then Exit;
   XUngrabPointer(FDpy, CurrentTime);
+  if (FDrag = dgMove) and (FDragClient <> nil) then SendMoveHint(FDragClient, False, 0, 0);
   if FDragClient <> nil then SendConfigure(FDragClient);
   FDrag := dgNone;
   FDragClient := nil;
+end;
+
+{ Tells a compositor that wants to know when a window is being dragged, so it
+  can animate the move (tiecomp's wobbly windows). It asks by owning the
+  _TIECOMP_S<screen> selection; with no owner nothing is sent. A _TIECOMP_MOVE
+  client message to the owner carries: the frame, 1 at the start or 0 at the
+  end, and where in the frame the pointer holds it. }
+procedure TWM.SendMoveHint(C: TClient; Starting: Boolean; GrabX, GrabY: Integer);
+var
+  Owner: TWindow;
+  Ev: TXEvent;
+begin
+  Owner := XGetSelectionOwner(FDpy, aCompSel);
+  if Owner = None then Exit;
+  FillChar(Ev, SizeOf(Ev), 0);
+  Ev.xclient._type := ClientMessage;
+  Ev.xclient.window := C.Frame;
+  Ev.xclient.message_type := aCompMove;
+  Ev.xclient.format := 32;
+  Ev.xclient.data.l[0] := C.Frame;
+  Ev.xclient.data.l[1] := Ord(Starting);
+  Ev.xclient.data.l[2] := GrabX;
+  Ev.xclient.data.l[3] := GrabY;
+  XSendEvent(FDpy, Owner, False, 0, @Ev);
+  LogDebug(Format('move hint frame=0x%x start=%d grab=%d,%d', [C.Frame, Ord(Starting), GrabX, GrabY]));
 end;
 
 procedure TWM.DoMotion(XRoot, YRoot: Integer);

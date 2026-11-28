@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **Move hints for compositors.** While a window is being dragged tiewm tells a compositor that asks for it, by owning the
+  `_TIECOMP_S<screen>` selection, when the move starts (and where the window is held) and when it ends. tiecomp uses this
+  for wobbly windows. With no such compositor running, nothing changes. Keyboard moves send no hint.
+
 ## 0.5.1 (2026-11-22)
 
 - **Fixed a crash on windows whose `_NET_WM_STATE` property exists but is empty** (seen with Terminator). The code that reads

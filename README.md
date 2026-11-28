@@ -268,6 +268,12 @@ differ only by anti-aliasing of the glyphs (a few dozen pixels, at most 6 levels
     DISPLAY=:99 tools/testwin -t "Active window" &
     DISPLAY=:99 import -window root ref/daloa-full.png
 
+## Compositors
+
+tiewm leaves compositing to a separate program such as picom. A compositor that wants to animate window moves can also own
+the `_TIECOMP_S<screen>` selection: while it does, tiewm sends it a `_TIECOMP_MOVE` client message when a drag starts
+(frame, 1, and where in the frame it is held) and when it ends (frame, 0).
+
 ## Not done
 
 Skipped on purpose, because xfwm4 here has them off or they are not needed: edge snapping and tiling, window resistance,
