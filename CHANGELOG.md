@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.1 (2026-11-28)
 
 - **Fixed: a window that asks to be fullscreen before it appears now is.** tiewm ignored `_NET_WM_STATE_FULLSCREEN` set
   before mapping, so a game (under Wine / Proton, for instance) could end up with the panel on top of it. Scenario section 48.
